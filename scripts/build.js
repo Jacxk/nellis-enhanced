@@ -36,6 +36,7 @@ async function bundle() {
   const manifestSrc = join(browserSrcDir, 'manifest.json');
   const contentScriptSrc = join(browserSrcDir, 'contentScript.js');
   const backgroundScriptSrc = join(browserSrcDir, 'background.js');
+  const buildTarget = browser === 'firefox' ? ['firefox121'] : ['chrome100'];
 
   await Promise.all([
     build({
@@ -43,7 +44,7 @@ async function bundle() {
       bundle: true,
       outfile: join(DIST_DIR, 'contentScript.bundle.js'),
       format: 'iife',
-      target: ['chrome100'],
+      target: buildTarget,
       minify: true,
       sourcemap: false,
       define: {
@@ -55,7 +56,7 @@ async function bundle() {
       bundle: true,
       outfile: join(DIST_DIR, 'background.bundle.js'),
       format: 'esm',
-      target: ['chrome100'],
+      target: buildTarget,
       minify: true,
       sourcemap: false,
       define: {
@@ -81,11 +82,18 @@ async function bundle() {
   writeFileSync(join(iconsDir, 'icon128.png'), placeholderPng);
 
   console.log(`Build complete! Output in ${DIST_DIR}`);
-  console.log(`\nTo load in Chrome:`);
-  console.log(`1. Open chrome://extensions/`);
+  const extensionsPage = browser === 'firefox' ? 'about:debugging#/runtime/this-firefox' : 'chrome://extensions/';
+  console.log(`\nTo load in ${browser === 'firefox' ? 'Firefox' : 'Chrome'}:`);
+  console.log(`1. Open ${extensionsPage}`);
   console.log(`2. Enable "Developer mode"`);
-  console.log(`3. Click "Load unpacked"`);
-  console.log(`4. Select the dist/ folder`);
+  console.log(
+    browser === 'firefox'
+      ? `3. Click "Load Temporary Add-on" and choose dist/manifest.json`
+      : `3. Click "Load unpacked"`
+  );
+  if (browser !== 'firefox') {
+    console.log(`4. Select the dist/ folder`);
+  }
 }
 
 bundle().catch((err) => {

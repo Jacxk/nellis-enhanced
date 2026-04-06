@@ -1,0 +1,33 @@
+{
+  "manifest_version": 3,
+  "name": "Nellis Enhanced",
+  "version": "1.0.0",
+  "description": "Nellis enhanced browser extension",
+  "permissions": [],
+  "host_permissions": [
+    "https://www.nellisauction.com/*",
+    "https://www.amazon.com/*"
+  ],
+  "background": {
+    "scripts": ["background.bundle.js"],
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.nellisauction.com/*"],
+      "js": ["contentScript.bundle.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "nellis-enhanced@yanluisfermin.dev",
+      "strict_min_version": "121.0"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

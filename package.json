@@ -7,7 +7,8 @@
     "build:firefox": "node scripts/build.js firefox",
     "build": "pnpm run build:chromium",
     "dev:chromium": "pnpm run build:chromium",
-    "watch:chromium": "chokidar 'src/**/*' -c 'pnpm run build:chromium'"
+    "watch:chromium": "chokidar 'src/**/*' -c 'pnpm run build:chromium'",
+    "watch:firefox": "chokidar 'src/**/*' -c 'pnpm run build:firefox'"
   },
   "keywords": [
     "browser-extension",

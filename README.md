@@ -1,6 +1,6 @@
 # Nellis Enhanced
 
-Chromium extension that injects an Amazon comparison module into Nellis Auction item pages.
+Chromium-first browser extension that injects an Amazon comparison module into Nellis Auction item pages, with a Firefox target sharing the same core logic.
 
 ## What It Does
 
@@ -18,9 +18,14 @@ src/
     background.js
     contentScript.js
     manifest.json
+  firefox/
+    background.js
+    contentScript.js
+    manifest.json
   shared/
     amazonSource.js
     extensionApi.js
+    backgroundMain.js
     nellisPage.js
     productMatcher.js
 scripts/
@@ -33,13 +38,16 @@ dist/
 ```bash
 pnpm install
 pnpm run build:chromium
+pnpm run build:firefox
 ```
 
-Load [dist/manifest.json](/Users/yanluisfermin/Documents/Projects/nellis-amazon-compare/dist/manifest.json) as an unpacked extension in a Chromium browser.
+Load [dist/manifest.json](/Users/yanluisfermin/.codex/worktrees/4e39/nellis-amazon-compare/dist/manifest.json) as an unpacked extension in a Chromium browser.
+
+For Firefox, open `about:debugging#/runtime/this-firefox` and load [dist/manifest.json](/Users/yanluisfermin/.codex/worktrees/4e39/nellis-amazon-compare/dist/manifest.json) as a temporary add-on after running `pnpm run build:firefox`.
 
 ## Editable Amazon Lookup
 
-The only function you should need to replace later is `getAmazonItem()` in [src/shared/amazonSource.js](/Users/yanluisfermin/Documents/Projects/nellis-amazon-compare/src/shared/amazonSource.js).
+The only function you should need to replace later is `getAmazonItem()` in [src/shared/amazonSource.js](/Users/yanluisfermin/.codex/worktrees/4e39/nellis-amazon-compare/src/shared/amazonSource.js).
 
 Keep this return shape:
 
@@ -58,4 +66,4 @@ If you swap from HTML fetching to your own API, leave the rest of the extension 
 
 - The current implementation uses Amazon search HTML and title-based matching.
 - If Amazon blocks requests or changes markup, replace `getAmazonItem()` with your API-backed logic.
-- Firefox support can be added by creating a `src/firefox/` adapter layer while reusing `src/shared/`.
+- Firefox support now lives in `src/firefox/` while reusing the shared DOM, lookup, and background logic.
