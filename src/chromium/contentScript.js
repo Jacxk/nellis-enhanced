@@ -1,8 +1,11 @@
 import {
   extractNellisItem,
+  findNellisPriceTargets,
   findItemDetailsAnchor,
+  hasNellisPriceCards,
   isNellisItemPage,
   isNellisOnlyItemTitle,
+  parseCurrencyAmount,
 } from '../shared/nellisPage.js';
 import { sendRuntimeMessage } from '../shared/extensionApi.js';
 import { getAmazonItemFromHtml } from '../shared/amazonSource.js';
@@ -10,12 +13,14 @@ import { parseAmazonProductPage } from '../shared/productMatcher.js';
 
 const CARD_ID = 'nellis-amazon-compare-card';
 const STYLE_ID = 'nellis-amazon-compare-style';
+const PREMIUM_HINT_CLASS = 'nellis-premium-hint';
 const PURCHASES_EXPORT_ID = 'nellis-purchases-export';
 const RENDER_DEBOUNCE_MS = 250;
 const MAX_RENDER_RETRIES = 20;
 const RENDER_RETRY_MS = 400;
 const PURCHASES_PAGE_SIZE = 30;
 const ROUTE_WATCH_INTERVAL_MS = 500;
+const BUYER_PREMIUM_RATE = 0.15;
 
 let activeRouteKey = '';
 let renderTimer = 0;
@@ -56,7 +61,7 @@ function installRouteListeners() {
   window.addEventListener('load', scheduleRender);
 
   const observer = new MutationObserver(() => {
-    if (isNellisItemPage() || isPurchasesPage()) {
+    if (isNellisItemPage() || isPurchasesPage() || hasNellisPriceCards()) {
       scheduleRender();
     }
   });
@@ -80,6 +85,11 @@ function installRouteListeners() {
       return;
     }
 
+    if (hasNellisPriceCards()) {
+      scheduleRender();
+      return;
+    }
+
     if (isNellisItemPage() && !document.getElementById(CARD_ID)) {
       scheduleRender();
     }
@@ -95,6 +105,7 @@ async function renderPageFeatures() {
   const routeKey = `${window.location.pathname}${window.location.search}`;
   injectStyles();
   renderPurchasesExportButton(routeKey);
+  attachPricePremiumHint();
 
   if (!isNellisItemPage()) {
     cleanupItemComparison(routeKey);
@@ -345,6 +356,37 @@ function removeExistingCard() {
   if (card) {
     card.remove();
   }
+}
+
+function attachPricePremiumHint() {
+  removePricePremiumHints();
+  const targets = findNellisPriceTargets();
+
+  for (const target of targets) {
+    const amount = parseCurrencyAmount(target.priceNode?.textContent);
+    if (amount === null) {
+      continue;
+    }
+
+    const totalWithPremium = formatCurrency(amount * (1 + BUYER_PREMIUM_RATE));
+
+    target.container.classList.add(PREMIUM_HINT_CLASS);
+    target.container.setAttribute('data-premium-tooltip', `Actual total: ${totalWithPremium}`);
+  }
+}
+
+function removePricePremiumHints() {
+  for (const node of document.querySelectorAll(`.${PREMIUM_HINT_CLASS}`)) {
+    node.classList.remove(PREMIUM_HINT_CLASS);
+    node.removeAttribute('data-premium-tooltip');
+  }
+}
+
+function formatCurrency(value) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  }).format(value);
 }
 
 function isPurchasesPage(locationObject = window.location) {
@@ -753,6 +795,53 @@ function injectStyles() {
 
     #${CARD_ID} .nellis-compare__button:hover {
       filter: brightness(0.98);
+    }
+
+    .${PREMIUM_HINT_CLASS} {
+      position: relative;
+      cursor: default;
+      overflow: visible;
+    }
+
+    .${PREMIUM_HINT_CLASS}::after {
+      content: attr(data-premium-tooltip);
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 8px);
+      transform: translateX(-50%);
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(17, 24, 39, 0.94);
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.2;
+      font-weight: 600;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease;
+      z-index: 9999;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
+    }
+
+    .${PREMIUM_HINT_CLASS}::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 2px);
+      transform: translateX(-50%);
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 6px solid rgba(17, 24, 39, 0.94);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease;
+      z-index: 9999;
+    }
+
+    .${PREMIUM_HINT_CLASS}:hover::after,
+    .${PREMIUM_HINT_CLASS}:hover::before {
+      opacity: 1;
     }
 
     .nellis-export-button {
