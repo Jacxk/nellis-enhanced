@@ -10,9 +10,11 @@ import { parseAmazonProductPage } from '../shared/productMatcher.js';
 
 const CARD_ID = 'nellis-amazon-compare-card';
 const STYLE_ID = 'nellis-amazon-compare-style';
+const PURCHASES_EXPORT_ID = 'nellis-purchases-export';
 const RENDER_DEBOUNCE_MS = 250;
 const MAX_RENDER_RETRIES = 20;
 const RENDER_RETRY_MS = 400;
+const PURCHASES_PAGE_SIZE = 30;
 
 let activeRouteKey = '';
 let renderTimer = 0;
@@ -20,6 +22,7 @@ let lookupSequence = 0;
 let lastRenderedTitle = '';
 let pendingRouteKey = '';
 let pendingRouteAttempts = 0;
+let purchasesExportInFlight = false;
 
 init();
 
@@ -62,19 +65,25 @@ function installRouteListeners() {
 
 function scheduleRender() {
   window.clearTimeout(renderTimer);
-  renderTimer = window.setTimeout(renderComparisonCard, RENDER_DEBOUNCE_MS);
+  renderTimer = window.setTimeout(renderPageFeatures, RENDER_DEBOUNCE_MS);
 }
 
-async function renderComparisonCard() {
+async function renderPageFeatures() {
   const routeKey = `${window.location.pathname}${window.location.search}`;
   injectStyles();
+  renderPurchasesExportButton(routeKey);
 
   if (!isNellisItemPage()) {
-    activeRouteKey = routeKey;
-    lastRenderedTitle = '';
-    pendingRouteKey = '';
-    pendingRouteAttempts = 0;
-    removeExistingCard();
+    cleanupItemComparison(routeKey);
+    return;
+  }
+
+  await renderComparisonCard(routeKey);
+}
+
+async function renderComparisonCard(routeKey) {
+  if (!isNellisItemPage()) {
+    cleanupItemComparison(routeKey);
     return;
   }
 
@@ -169,6 +178,14 @@ async function renderComparisonCard() {
       amazonItem: null,
     });
   }
+}
+
+function cleanupItemComparison(routeKey) {
+  activeRouteKey = routeKey;
+  lastRenderedTitle = '';
+  pendingRouteKey = '';
+  pendingRouteAttempts = 0;
+  removeExistingCard();
 }
 
 function ensureCard(itemDetailsAnchor) {
@@ -307,6 +324,187 @@ function removeExistingCard() {
   }
 }
 
+function isPurchasesPage(locationObject = window.location) {
+  return locationObject.pathname === '/dashboard/purchases';
+}
+
+function renderPurchasesExportButton(routeKey) {
+  if (!isPurchasesPage()) {
+    removePurchasesExportButton();
+    return;
+  }
+
+  const anchor = findPurchasesAnchor();
+  if (!anchor) {
+    return;
+  }
+
+  let button = document.getElementById(PURCHASES_EXPORT_ID);
+  if (!button) {
+    button = document.createElement('button');
+    button.id = PURCHASES_EXPORT_ID;
+    button.type = 'button';
+    button.className = 'nellis-export-button';
+    button.textContent = 'Export CSV';
+    button.addEventListener('click', handlePurchasesExport);
+  }
+
+  button.dataset.routeKey = routeKey;
+
+  if (button.parentElement !== anchor) {
+    anchor.appendChild(button);
+  }
+}
+
+function findPurchasesAnchor(root = document) {
+  const headings = Array.from(root.querySelectorAll('h1, h2, h3, [role="heading"]'));
+  const purchasesHeading = headings.find((node) =>
+    node.textContent?.trim().toLowerCase().includes('purchases')
+  );
+
+  if (purchasesHeading?.parentElement) {
+    return purchasesHeading.parentElement;
+  }
+
+  return (
+    root.querySelector('[class*="purchase"] [class*="header"]') ||
+    root.querySelector('[class*="Purchase"] [class*="Header"]') ||
+    root.querySelector('main') ||
+    null
+  );
+}
+
+function removePurchasesExportButton() {
+  const button = document.getElementById(PURCHASES_EXPORT_ID);
+  if (button) {
+    button.remove();
+  }
+}
+
+async function handlePurchasesExport(event) {
+  const button = event.currentTarget;
+  if (!(button instanceof HTMLButtonElement) || purchasesExportInFlight) {
+    return;
+  }
+
+  purchasesExportInFlight = true;
+  setPurchasesButtonState(button, {
+    disabled: true,
+    label: 'Exporting...',
+  });
+
+  try {
+    const records = await fetchAllPurchases();
+    const csvText = buildPurchasesCsv(records);
+    downloadPurchasesCsv(csvText);
+
+    setPurchasesButtonState(button, {
+      disabled: false,
+      label: `Export CSV (${records.length})`,
+    });
+  } catch (error) {
+    console.error('[NellisCompare] Failed to export purchases:', error);
+    setPurchasesButtonState(button, {
+      disabled: false,
+      label: 'Export failed',
+    });
+    window.setTimeout(() => {
+      const liveButton = document.getElementById(PURCHASES_EXPORT_ID);
+      if (liveButton instanceof HTMLButtonElement) {
+        setPurchasesButtonState(liveButton, {
+          disabled: false,
+          label: 'Export CSV',
+        });
+      }
+    }, 2000);
+  } finally {
+    purchasesExportInFlight = false;
+  }
+}
+
+function setPurchasesButtonState(button, { disabled, label }) {
+  button.disabled = disabled;
+  button.textContent = label;
+}
+
+async function fetchAllPurchases() {
+  const allRecords = [];
+  let page = 0;
+  let total = Infinity;
+
+  while (allRecords.length < total) {
+    const response = await sendRuntimeMessage({
+      type: 'FETCH_PURCHASES_PAGE',
+      page,
+      size: PURCHASES_PAGE_SIZE,
+    });
+
+    const pageData = response?.data;
+    const records = Array.isArray(pageData?.records) ? pageData.records : [];
+    total = Number.isFinite(pageData?.total) ? pageData.total : records.length;
+
+    if (!records.length) {
+      break;
+    }
+
+    allRecords.push(...records);
+    page += 1;
+  }
+
+  return allRecords.slice(0, Number.isFinite(total) ? total : allRecords.length);
+}
+
+function buildPurchasesCsv(records) {
+  const columns = [
+    ['buyNowId', (record) => record.buyNowId],
+    ['projectId', (record) => record.projectId],
+    ['originalReceiptId', (record) => record.originalReceiptId],
+    ['originalReceiptCreatedAt', (record) => getDateValue(record.originalReceiptCreatedAt)],
+    ['locationName', (record) => record.locationName],
+    ['locationCity', (record) => record.locationCity],
+    ['inventoryNumber', (record) => record.inventoryNumber],
+    ['leadDescription', (record) => record.leadDescription],
+    ['photoUrl', (record) => record.photo?.url || ''],
+    ['returnReceiptId', (record) => record.returnReceiptId],
+    ['returnCreatedAt', (record) => getDateValue(record.returnCreatedAt)],
+    ['returnUpdatedAt', (record) => getDateValue(record.returnUpdatedAt)],
+    ['returnStatusId', (record) => record.returnStatusId],
+    ['returnStatus', (record) => record.returnStatus],
+    ['returnId', (record) => record.returnId],
+    ['notReturnable', (record) => record.notReturnable],
+  ];
+
+  const headerRow = columns.map(([name]) => csvEscape(name)).join(',');
+  const bodyRows = records.map((record) =>
+    columns.map(([, getter]) => csvEscape(getter(record))).join(',')
+  );
+
+  return [headerRow, ...bodyRows].join('\n');
+}
+
+function getDateValue(value) {
+  return value?.value || '';
+}
+
+function csvEscape(value) {
+  const normalizedValue = value == null ? '' : String(value);
+  return `"${normalizedValue.replace(/"/g, '""')}"`;
+}
+
+function downloadPurchasesCsv(csvText) {
+  const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8' });
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  const dateStamp = new Date().toISOString().slice(0, 10);
+
+  link.href = objectUrl;
+  link.download = `nellis-purchases-${dateStamp}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
 function injectStyles() {
   if (document.getElementById(STYLE_ID)) {
     return;
@@ -432,6 +630,32 @@ function injectStyles() {
 
     #${CARD_ID} .nellis-compare__button:hover {
       filter: brightness(0.98);
+    }
+
+    .nellis-export-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 0 16px;
+      border-radius: 999px;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      background: #ffffff;
+      color: #111827;
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 12px;
+    }
+
+    .nellis-export-button:hover:not(:disabled) {
+      filter: brightness(0.98);
+    }
+
+    .nellis-export-button:disabled {
+      cursor: wait;
+      opacity: 0.7;
     }
 
     @media (max-width: 720px) {
