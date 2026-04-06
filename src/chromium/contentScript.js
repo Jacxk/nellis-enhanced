@@ -1,0 +1,450 @@
+import {
+  extractNellisItem,
+  findItemDetailsAnchor,
+  isNellisItemPage,
+  isNellisOnlyItemTitle,
+} from '../shared/nellisPage.js';
+import { sendRuntimeMessage } from '../shared/extensionApi.js';
+import { getAmazonItemFromHtml } from '../shared/amazonSource.js';
+import { parseAmazonProductPage } from '../shared/productMatcher.js';
+
+const CARD_ID = 'nellis-amazon-compare-card';
+const STYLE_ID = 'nellis-amazon-compare-style';
+const RENDER_DEBOUNCE_MS = 250;
+const MAX_RENDER_RETRIES = 20;
+const RENDER_RETRY_MS = 400;
+
+let activeRouteKey = '';
+let renderTimer = 0;
+let lookupSequence = 0;
+let lastRenderedTitle = '';
+let pendingRouteKey = '';
+let pendingRouteAttempts = 0;
+
+init();
+
+function init() {
+  injectStyles();
+  installRouteListeners();
+  scheduleRender();
+}
+
+function installRouteListeners() {
+  const { pushState, replaceState } = history;
+
+  history.pushState = function pushStatePatched(...args) {
+    const result = pushState.apply(this, args);
+    scheduleRender();
+    return result;
+  };
+
+  history.replaceState = function replaceStatePatched(...args) {
+    const result = replaceState.apply(this, args);
+    scheduleRender();
+    return result;
+  };
+
+  window.addEventListener('popstate', scheduleRender);
+  window.addEventListener('pageshow', scheduleRender);
+  window.addEventListener('load', scheduleRender);
+
+  const observer = new MutationObserver(() => {
+    if (isNellisItemPage()) {
+      scheduleRender();
+    }
+  });
+
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
+}
+
+function scheduleRender() {
+  window.clearTimeout(renderTimer);
+  renderTimer = window.setTimeout(renderComparisonCard, RENDER_DEBOUNCE_MS);
+}
+
+async function renderComparisonCard() {
+  const routeKey = `${window.location.pathname}${window.location.search}`;
+  injectStyles();
+
+  if (!isNellisItemPage()) {
+    activeRouteKey = routeKey;
+    lastRenderedTitle = '';
+    pendingRouteKey = '';
+    pendingRouteAttempts = 0;
+    removeExistingCard();
+    return;
+  }
+
+  if (pendingRouteKey !== routeKey) {
+    pendingRouteKey = routeKey;
+    pendingRouteAttempts = 0;
+  }
+
+  const nellisItem = extractNellisItem();
+  const itemDetailsAnchor = findItemDetailsAnchor();
+
+  if (!nellisItem?.title || !itemDetailsAnchor) {
+    if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
+      pendingRouteAttempts += 1;
+      window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    }
+    return;
+  }
+
+  if (isNellisOnlyItemTitle(nellisItem.title)) {
+    activeRouteKey = routeKey;
+    lastRenderedTitle = nellisItem.title;
+    pendingRouteAttempts = 0;
+    removeExistingCard();
+    return;
+  }
+
+  pendingRouteAttempts = 0;
+
+  const titleChanged = nellisItem.title !== lastRenderedTitle;
+  const routeChanged = routeKey !== activeRouteKey;
+  const existingCard = document.getElementById(CARD_ID);
+
+  if (!titleChanged && !routeChanged && existingCard) {
+    return;
+  }
+
+  activeRouteKey = routeKey;
+  lastRenderedTitle = nellisItem.title;
+
+  const card = ensureCard(itemDetailsAnchor);
+  updateCardState(card, {
+    state: 'loading',
+    nellisItem,
+  });
+
+  const currentLookup = ++lookupSequence;
+
+  try {
+    const response = await sendRuntimeMessage({
+      type: 'FETCH_AMAZON_SEARCH_HTML',
+      title: nellisItem.title,
+    });
+
+    const searchResultItem = getAmazonItemFromHtml(nellisItem.title, response?.html);
+    let amazonItem = searchResultItem;
+
+    if (searchResultItem?.url) {
+      const productResponse = await sendRuntimeMessage({
+        type: 'FETCH_AMAZON_PRODUCT_HTML',
+        url: searchResultItem.url,
+      });
+
+      const productPageItem = parseAmazonProductPage(productResponse?.html, searchResultItem.url);
+      if (productPageItem) {
+        amazonItem = {
+          ...searchResultItem,
+          ...productPageItem,
+        };
+      }
+    }
+
+    if (currentLookup !== lookupSequence) {
+      return;
+    }
+
+    updateCardState(card, {
+      state: hasRenderableAmazonItem(amazonItem) ? 'ready' : 'empty',
+      nellisItem,
+      amazonItem: amazonItem || null,
+    });
+  } catch (error) {
+    console.error('[NellisCompare] Failed to load Amazon item:', error);
+
+    if (currentLookup !== lookupSequence) {
+      return;
+    }
+
+    updateCardState(card, {
+      state: 'empty',
+      nellisItem,
+      amazonItem: null,
+    });
+  }
+}
+
+function ensureCard(itemDetailsAnchor) {
+  let card = document.getElementById(CARD_ID);
+
+  if (!card) {
+    card = document.createElement('section');
+    card.id = CARD_ID;
+    card.innerHTML = `
+      <div class="nellis-compare__header">
+        <div class="nellis-compare__badge" aria-hidden="true">a</div>
+        <div>
+          <h3 class="nellis-compare__title">Amazon</h3>
+        </div>
+      </div>
+      <div class="nellis-compare__status" data-role="status"></div>
+      <div class="nellis-compare__body" data-role="body" hidden>
+        <div class="nellis-compare__image-wrap">
+          <img class="nellis-compare__image" data-role="image" alt="" />
+        </div>
+        <div class="nellis-compare__content">
+          <a class="nellis-compare__product-title" data-role="title" target="_blank" rel="noopener noreferrer"></a>
+          <p class="nellis-compare__price" data-role="price"></p>
+          <a class="nellis-compare__button" data-role="link" target="_blank" rel="noopener noreferrer">
+            View on Amazon
+          </a>
+        </div>
+      </div>
+    `;
+  }
+
+  applyNativeCardStyling(card, itemDetailsAnchor);
+
+  if (card.parentElement !== itemDetailsAnchor.parentElement) {
+    itemDetailsAnchor.insertAdjacentElement('afterend', card);
+  } else if (card.previousElementSibling !== itemDetailsAnchor) {
+    itemDetailsAnchor.insertAdjacentElement('afterend', card);
+  }
+
+  return card;
+}
+
+function updateCardState(card, { state, nellisItem, amazonItem }) {
+  const statusNode = card.querySelector('[data-role="status"]');
+  const bodyNode = card.querySelector('[data-role="body"]');
+  const imageWrapNode = card.querySelector('.nellis-compare__image-wrap');
+  const imageNode = card.querySelector('[data-role="image"]');
+  const titleNode = card.querySelector('[data-role="title"]');
+  const priceNode = card.querySelector('[data-role="price"]');
+  const linkNode = card.querySelector('[data-role="link"]');
+
+  if (state === 'loading') {
+    bodyNode.hidden = true;
+    statusNode.hidden = false;
+    statusNode.textContent = 'Loading Amazon item...';
+    return;
+  }
+
+  if (state === 'empty' || !amazonItem?.url) {
+    bodyNode.hidden = true;
+    statusNode.hidden = false;
+    statusNode.textContent = 'Amazon item unavailable.';
+    return;
+  }
+
+  statusNode.hidden = true;
+  bodyNode.hidden = false;
+
+  const imageSrc = amazonItem.imageSrc || nellisItem.imageSrc || '';
+  imageWrapNode.hidden = !imageSrc;
+  imageNode.src = imageSrc;
+  imageNode.alt = amazonItem.title || nellisItem.title;
+  titleNode.textContent = amazonItem.title || 'Amazon item';
+  titleNode.href = amazonItem.url;
+  priceNode.textContent = amazonItem.price || 'See price on Amazon';
+  linkNode.href = amazonItem.url;
+  linkNode.hidden = !amazonItem.url;
+}
+
+function hasRenderableAmazonItem(item) {
+  return Boolean(item?.title && item?.url);
+}
+
+function applyNativeCardStyling(card, itemDetailsAnchor) {
+  const anchorStyle = window.getComputedStyle(itemDetailsAnchor);
+  const sampleTextNode =
+    itemDetailsAnchor.querySelector('p, span, div, li') || itemDetailsAnchor;
+  const sampleTextStyle = window.getComputedStyle(sampleTextNode);
+  const headingNode =
+    itemDetailsAnchor.querySelector('h1, h2, h3, h4, [role="heading"]') || itemDetailsAnchor;
+  const headingStyle = window.getComputedStyle(headingNode);
+
+  const backgroundColor = pickStyleValue(anchorStyle.backgroundColor, 'rgb(255, 255, 255)');
+  const borderColor = pickStyleValue(anchorStyle.borderColor, 'rgba(15, 23, 42, 0.08)');
+  const borderRadius = pickStyleValue(anchorStyle.borderRadius, '12px');
+  const boxShadow = pickStyleValue(anchorStyle.boxShadow, '0 6px 18px rgba(15, 23, 42, 0.06)');
+  const textColor = pickStyleValue(sampleTextStyle.color, 'rgb(31, 41, 55)');
+  const mutedColor = softenColor(textColor, 0.72);
+  const headingColor = pickStyleValue(headingStyle.color, textColor);
+  const fontFamily = pickStyleValue(sampleTextStyle.fontFamily, 'inherit');
+  const buttonBackground = 'linear-gradient(180deg, #ffe7a3 0%, #ffd85c 100%)';
+
+  card.style.setProperty('--nellis-compare-background', backgroundColor);
+  card.style.setProperty('--nellis-compare-border', borderColor);
+  card.style.setProperty('--nellis-compare-radius', borderRadius);
+  card.style.setProperty('--nellis-compare-shadow', boxShadow);
+  card.style.setProperty('--nellis-compare-text', textColor);
+  card.style.setProperty('--nellis-compare-muted', mutedColor);
+  card.style.setProperty('--nellis-compare-heading', headingColor);
+  card.style.setProperty('--nellis-compare-font', fontFamily);
+  card.style.setProperty('--nellis-compare-button-bg', buttonBackground);
+}
+
+function pickStyleValue(value, fallback) {
+  if (!value || value === 'rgba(0, 0, 0, 0)' || value === 'none' || value === 'normal') {
+    return fallback;
+  }
+
+  return value;
+}
+
+function softenColor(color, alpha) {
+  const match = color.match(/\d+/g);
+  if (!match || match.length < 3) {
+    return color;
+  }
+
+  const [red, green, blue] = match;
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
+function removeExistingCard() {
+  const card = document.getElementById(CARD_ID);
+  if (card) {
+    card.remove();
+  }
+}
+
+function injectStyles() {
+  if (document.getElementById(STYLE_ID)) {
+    return;
+  }
+
+  const style = document.createElement('style');
+  style.id = STYLE_ID;
+  style.textContent = `
+    #${CARD_ID} {
+      margin-top: 16px;
+      border: 1px solid var(--nellis-compare-border, rgba(15, 23, 42, 0.08));
+      border-radius: var(--nellis-compare-radius, 12px);
+      background: var(--nellis-compare-background, #ffffff);
+      box-shadow: var(--nellis-compare-shadow, 0 6px 18px rgba(15, 23, 42, 0.06));
+      padding: 16px;
+      color: var(--nellis-compare-text, #1f2937);
+      font-family: var(--nellis-compare-font, inherit);
+    }
+
+    #${CARD_ID} * {
+      box-sizing: border-box;
+      font-family: inherit;
+    }
+
+    #${CARD_ID} .nellis-compare__header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    #${CARD_ID} .nellis-compare__badge {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      font: 700 16px/1 Arial, sans-serif;
+      color: #111827;
+      background: linear-gradient(135deg, #ffe082 0%, #ffc94d 100%);
+      text-transform: lowercase;
+    }
+
+    #${CARD_ID} .nellis-compare__title {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.2;
+      font-weight: 700;
+      color: var(--nellis-compare-heading, #111827);
+    }
+
+    #${CARD_ID} .nellis-compare__status {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--nellis-compare-muted, #6b7280);
+    }
+
+    #${CARD_ID} .nellis-compare__body {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    #${CARD_ID} .nellis-compare__image-wrap {
+      width: 92px;
+      height: 92px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid var(--nellis-compare-border, rgba(15, 23, 42, 0.08));
+      display: grid;
+      place-items: center;
+      overflow: hidden;
+    }
+
+    #${CARD_ID} .nellis-compare__image {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #fff;
+    }
+
+    #${CARD_ID} .nellis-compare__content {
+      min-width: 0;
+    }
+
+    #${CARD_ID} .nellis-compare__product-title {
+      display: inline-block;
+      margin: 0 0 12px;
+      color: var(--nellis-compare-heading, #111827);
+      text-decoration: none;
+      font-size: 14px;
+      line-height: 1.5;
+      font-weight: 600;
+    }
+
+    #${CARD_ID} .nellis-compare__product-title:hover {
+      text-decoration: underline;
+    }
+
+    #${CARD_ID} .nellis-compare__price {
+      margin: 0 0 12px;
+      font-size: 20px;
+      line-height: 1.1;
+      font-weight: 800;
+      color: #a16207;
+    }
+
+    #${CARD_ID} .nellis-compare__button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 36px;
+      padding: 0 14px;
+      border-radius: 999px;
+      border: 1px solid #f2c200;
+      background: var(--nellis-compare-button-bg, linear-gradient(180deg, #ffe7a3 0%, #ffd85c 100%));
+      color: #111827;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    #${CARD_ID} .nellis-compare__button:hover {
+      filter: brightness(0.98);
+    }
+
+    @media (max-width: 720px) {
+      #${CARD_ID} .nellis-compare__body {
+        grid-template-columns: 1fr;
+      }
+
+      #${CARD_ID} .nellis-compare__image-wrap {
+        width: 100%;
+        max-width: 120px;
+      }
+    }
+  `;
+
+  (document.head || document.documentElement).appendChild(style);
+}
