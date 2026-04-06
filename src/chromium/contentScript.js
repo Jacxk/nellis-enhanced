@@ -15,6 +15,7 @@ const RENDER_DEBOUNCE_MS = 250;
 const MAX_RENDER_RETRIES = 20;
 const RENDER_RETRY_MS = 400;
 const PURCHASES_PAGE_SIZE = 30;
+const ROUTE_WATCH_INTERVAL_MS = 500;
 
 let activeRouteKey = '';
 let renderTimer = 0;
@@ -23,6 +24,9 @@ let lastRenderedTitle = '';
 let pendingRouteKey = '';
 let pendingRouteAttempts = 0;
 let purchasesExportInFlight = false;
+let purchasesRouteKey = '';
+let purchasesRenderAttempts = 0;
+let lastKnownUrl = window.location.href;
 
 init();
 
@@ -52,7 +56,7 @@ function installRouteListeners() {
   window.addEventListener('load', scheduleRender);
 
   const observer = new MutationObserver(() => {
-    if (isNellisItemPage()) {
+    if (isNellisItemPage() || isPurchasesPage()) {
       scheduleRender();
     }
   });
@@ -61,6 +65,25 @@ function installRouteListeners() {
     childList: true,
     subtree: true,
   });
+
+  window.setInterval(() => {
+    const currentUrl = window.location.href;
+
+    if (currentUrl !== lastKnownUrl) {
+      lastKnownUrl = currentUrl;
+      scheduleRender();
+      return;
+    }
+
+    if (isPurchasesPage() && !document.getElementById(PURCHASES_EXPORT_ID)) {
+      scheduleRender();
+      return;
+    }
+
+    if (isNellisItemPage() && !document.getElementById(CARD_ID)) {
+      scheduleRender();
+    }
+  }, ROUTE_WATCH_INTERVAL_MS);
 }
 
 function scheduleRender() {
@@ -330,14 +353,27 @@ function isPurchasesPage(locationObject = window.location) {
 
 function renderPurchasesExportButton(routeKey) {
   if (!isPurchasesPage()) {
+    purchasesRouteKey = '';
+    purchasesRenderAttempts = 0;
     removePurchasesExportButton();
     return;
   }
 
+  if (purchasesRouteKey !== routeKey) {
+    purchasesRouteKey = routeKey;
+    purchasesRenderAttempts = 0;
+  }
+
   const anchor = findPurchasesAnchor();
   if (!anchor) {
+    if (purchasesRenderAttempts < MAX_RENDER_RETRIES) {
+      purchasesRenderAttempts += 1;
+      window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    }
     return;
   }
+
+  purchasesRenderAttempts = 0;
 
   let button = document.getElementById(PURCHASES_EXPORT_ID);
   if (!button) {
@@ -400,7 +436,7 @@ async function handlePurchasesExport(event) {
 
     setPurchasesButtonState(button, {
       disabled: false,
-      label: `Export CSV (${records.length})`,
+      label: 'Export CSV',
     });
   } catch (error) {
     console.error('[NellisCompare] Failed to export purchases:', error);
@@ -428,20 +464,38 @@ function setPurchasesButtonState(button, { disabled, label }) {
 }
 
 async function fetchAllPurchases() {
+  const strategies = [
+    { firstPage: 0, omitPageParam: false },
+    { firstPage: 1, omitPageParam: false },
+    { firstPage: 0, omitPageParam: true },
+  ];
+
+  for (const strategy of strategies) {
+    const records = await fetchAllPurchasesWithStrategy(strategy);
+    if (records.length) {
+      return records;
+    }
+  }
+
+  return [];
+}
+
+async function fetchAllPurchasesWithStrategy({ firstPage, omitPageParam }) {
   const allRecords = [];
-  let page = 0;
+  let page = firstPage;
   let total = Infinity;
+  let pageIndex = 0;
 
   while (allRecords.length < total) {
-    const response = await sendRuntimeMessage({
-      type: 'FETCH_PURCHASES_PAGE',
+    const pageData = await fetchPurchasesPage({
       page,
       size: PURCHASES_PAGE_SIZE,
+      omitPageParam: omitPageParam && pageIndex === 0,
     });
+    const records = getPurchasesRecords(pageData);
+    const nextTotal = Number(pageData?.total);
 
-    const pageData = response?.data;
-    const records = Array.isArray(pageData?.records) ? pageData.records : [];
-    total = Number.isFinite(pageData?.total) ? pageData.total : records.length;
+    total = Number.isFinite(nextTotal) && nextTotal >= 0 ? nextTotal : records.length;
 
     if (!records.length) {
       break;
@@ -449,9 +503,77 @@ async function fetchAllPurchases() {
 
     allRecords.push(...records);
     page += 1;
+    pageIndex += 1;
   }
 
   return allRecords.slice(0, Number.isFinite(total) ? total : allRecords.length);
+}
+
+async function fetchPurchasesPage({ page, size, omitPageParam = false }) {
+  const endpointUrl = new URL('/dashboard/purchases', window.location.origin);
+  endpointUrl.searchParams.set('_data', 'routes/dashboard.purchases._index');
+  endpointUrl.searchParams.set('size', String(size));
+
+  if (!omitPageParam) {
+    endpointUrl.searchParams.set('page', String(page));
+  }
+
+  try {
+    const response = await fetch(endpointUrl.toString(), {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        accept: 'application/json, text/plain, */*',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Purchases request failed with status ${response.status}`);
+    }
+
+    const responseText = await response.text();
+    const parsed = JSON.parse(responseText);
+    return getPurchasesPageData(parsed);
+  } catch (error) {
+    const fallbackResponse = await sendRuntimeMessage({
+      type: 'FETCH_PURCHASES_PAGE',
+      page,
+      size,
+    });
+
+    if (fallbackResponse?.error) {
+      throw error;
+    }
+
+    return getPurchasesPageData(fallbackResponse?.data);
+  }
+}
+
+function getPurchasesPageData(payload) {
+  if (Array.isArray(payload?.records)) {
+    return payload;
+  }
+
+  if (Array.isArray(payload?.data?.records)) {
+    return payload.data;
+  }
+
+  if (Array.isArray(payload?.purchases?.records)) {
+    return payload.purchases;
+  }
+
+  if (Array.isArray(payload?.purchaseHistory?.records)) {
+    return payload.purchaseHistory;
+  }
+
+  return {
+    total: 0,
+    records: [],
+  };
+}
+
+function getPurchasesRecords(pageData) {
+  return Array.isArray(pageData?.records) ? pageData.records : [];
 }
 
 function buildPurchasesCsv(records) {
@@ -479,7 +601,7 @@ function buildPurchasesCsv(records) {
     columns.map(([, getter]) => csvEscape(getter(record))).join(',')
   );
 
-  return [headerRow, ...bodyRows].join('\n');
+  return [headerRow, ...bodyRows].join('\r\n');
 }
 
 function getDateValue(value) {
@@ -492,17 +614,18 @@ function csvEscape(value) {
 }
 
 function downloadPurchasesCsv(csvText) {
-  const blob = new Blob([csvText], { type: 'text/csv;charset=utf-8' });
+  const blob = new Blob(['\uFEFF', csvText], { type: 'text/csv;charset=utf-8' });
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement('a');
   const dateStamp = new Date().toISOString().slice(0, 10);
 
   link.href = objectUrl;
   link.download = `nellis-purchases-${dateStamp}.csv`;
+  link.style.display = 'none';
   document.body.appendChild(link);
   link.click();
   link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
 }
 
 function injectStyles() {
@@ -638,7 +761,7 @@ function injectStyles() {
       justify-content: center;
       min-height: 38px;
       padding: 0 16px;
-      border-radius: 999px;
+      border-radius: 12px;
       border: 1px solid rgba(15, 23, 42, 0.12);
       background: #ffffff;
       color: #111827;
