@@ -49,6 +49,95 @@ export function isNellisOnlyItemTitle(title) {
   return NELLIS_ONLY_TITLE_PATTERNS.some((pattern) => pattern.test(String(title || '')));
 }
 
+export function findNellisPriceTargets(root = document) {
+  const targetLabels = ['current price', 'won for', 'sold for'];
+  const targets = [];
+  const seen = new Set();
+
+  for (const targetLabel of targetLabels) {
+    for (const target of findPriceTargetsByLabel(root, targetLabel)) {
+      if (!seen.has(target.container)) {
+        seen.add(target.container);
+        targets.push(target);
+      }
+    }
+  }
+
+  const searchRoots = [root.querySelector('#bid-section'), root.querySelector('main'), root].filter(
+    Boolean
+  );
+
+  for (const searchRoot of searchRoots) {
+    for (const selector of PRICE_SELECTORS) {
+      const nodes = Array.from(searchRoot.querySelectorAll(selector));
+
+      for (const node of nodes) {
+        if (!node?.textContent?.trim() || node.closest('#nellis-amazon-compare-card')) {
+          continue;
+        }
+
+        const container = node.closest('[data-ax="item-card-container"], #bid-section, div');
+        if (container && !seen.has(container)) {
+          seen.add(container);
+          targets.push({ container, priceNode: node });
+        }
+      }
+    }
+  }
+
+  return targets;
+}
+
+export function hasNellisPriceCards(root = document) {
+  return Boolean(root.querySelector('#bid-section, [data-ax="item-card-container"]'));
+}
+
+export function parseCurrencyAmount(value) {
+  const normalizedValue = String(value || '').replace(/,/g, '');
+  const match = normalizedValue.match(/\$?\s*(\d+(?:\.\d{1,2})?)/);
+
+  if (!match) {
+    return null;
+  }
+
+  return Number.parseFloat(match[1]);
+}
+
+function findPriceTargetsByLabel(root, labelText) {
+  const normalizedLabel = labelText.trim().toLowerCase();
+  const labels = Array.from(root.querySelectorAll('p, strong, span, div'));
+  const targets = [];
+
+  for (const labelNode of labels) {
+    const text = labelNode.textContent?.trim().toLowerCase();
+    if (!text || text !== normalizedLabel) {
+      continue;
+    }
+
+    const priceCard =
+      labelNode.closest('#bid-section > div > div, [data-ax="item-card-container"] .p-2\\.5 > div') ||
+      labelNode.closest('#bid-section, [data-ax="item-card-container"], form, div');
+    const container = priceCard || labelNode.closest('div');
+    if (!container) {
+      continue;
+    }
+
+    const priceCandidates = Array.from(container.querySelectorAll('p, span, div'))
+      .filter((node) => node !== labelNode)
+      .filter((node) => !node.closest('#nellis-amazon-compare-card'))
+      .filter((node) => /\$\s*\d/.test(node.textContent || ''));
+
+    if (priceCandidates.length) {
+      targets.push({
+        container,
+        priceNode: priceCandidates[0],
+      });
+    }
+  }
+
+  return targets;
+}
+
 export function findItemDetailsAnchor(root = document) {
   const selectorMatch = [
     '[class*="item-details"]',
