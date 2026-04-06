@@ -88,6 +88,10 @@ export function findNellisPriceTargets(root = document) {
   return targets;
 }
 
+export function findNellisTimeTargets(root = document) {
+  return findCardTargetsByLabel(root, ['time left']);
+}
+
 export function hasNellisPriceCards(root = document) {
   return Boolean(root.querySelector('#bid-section, [data-ax="item-card-container"]'));
 }
@@ -104,35 +108,50 @@ export function parseCurrencyAmount(value) {
 }
 
 function findPriceTargetsByLabel(root, labelText) {
-  const normalizedLabel = labelText.trim().toLowerCase();
-  const labels = Array.from(root.querySelectorAll('p, strong, span, div'));
-  const targets = [];
-
-  for (const labelNode of labels) {
-    const text = labelNode.textContent?.trim().toLowerCase();
-    if (!text || text !== normalizedLabel) {
-      continue;
-    }
-
-    const priceCard =
-      labelNode.closest('#bid-section > div > div, [data-ax="item-card-container"] .p-2\\.5 > div') ||
-      labelNode.closest('#bid-section, [data-ax="item-card-container"], form, div');
-    const container = priceCard || labelNode.closest('div');
-    if (!container) {
-      continue;
-    }
-
+  return findCardTargetsByLabel(root, [labelText], (container, labelNode) => {
     const priceCandidates = Array.from(container.querySelectorAll('p, span, div'))
       .filter((node) => node !== labelNode)
       .filter((node) => !node.closest('#nellis-amazon-compare-card'))
       .filter((node) => /\$\s*\d/.test(node.textContent || ''));
 
-    if (priceCandidates.length) {
-      targets.push({
-        container,
-        priceNode: priceCandidates[0],
-      });
+    if (!priceCandidates.length) {
+      return null;
     }
+
+    return {
+      container,
+      priceNode: priceCandidates[0],
+    };
+  });
+}
+
+function findCardTargetsByLabel(root, labels, buildTarget = (container) => ({ container })) {
+  const normalizedLabels = new Set(labels.map((label) => label.trim().toLowerCase()));
+  const labelNodes = Array.from(root.querySelectorAll('p, strong, span, div'));
+  const targets = [];
+  const seen = new Set();
+
+  for (const labelNode of labelNodes) {
+    const text = labelNode.textContent?.trim().toLowerCase();
+    if (!text || !normalizedLabels.has(text)) {
+      continue;
+    }
+
+    const preferredContainer =
+      labelNode.closest('#bid-section > div > div, [data-ax="item-card-container"] .p-2\\.5 > div') ||
+      labelNode.closest('#bid-section, [data-ax="item-card-container"], form, div');
+    const container = preferredContainer || labelNode.closest('div');
+    if (!container || seen.has(container)) {
+      continue;
+    }
+
+    const target = buildTarget(container, labelNode);
+    if (!target) {
+      continue;
+    }
+
+    seen.add(container);
+    targets.push(target);
   }
 
   return targets;
