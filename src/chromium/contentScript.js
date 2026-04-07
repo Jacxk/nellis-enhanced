@@ -3,7 +3,6 @@ import {
   findNellisPriceTargets,
   findNellisTimeTargets,
   findItemDetailsAnchor,
-  findTitleDescriptionAnchor,
   hasNellisPriceCards,
   isNellisAuctionSite,
   isNellisItemPage,
@@ -157,9 +156,9 @@ async function renderComparisonCard(routeKey) {
   }
 
   const nellisItem = extractNellisItem();
-  const primaryAnchor = findTitleDescriptionAnchor() || findItemDetailsAnchor();
+  const itemDetailsAnchor = findItemDetailsAnchor();
 
-  if (!nellisItem?.title || !primaryAnchor) {
+  if (!nellisItem?.title || !itemDetailsAnchor) {
     if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
       pendingRouteAttempts += 1;
       window.setTimeout(scheduleRender, RENDER_RETRY_MS);
@@ -188,7 +187,7 @@ async function renderComparisonCard(routeKey) {
   activeRouteKey = routeKey;
   lastRenderedTitle = nellisItem.title;
 
-  const card = ensureCard(primaryAnchor);
+  const card = ensureCard(itemDetailsAnchor);
   updateCardState(card, {
     state: 'loading',
     nellisItem,
@@ -282,10 +281,8 @@ function ensureCard(itemDetailsAnchor) {
 
   applyNativeCardStyling(card, itemDetailsAnchor);
 
-  if (card.parentElement !== itemDetailsAnchor.parentElement) {
-    itemDetailsAnchor.insertAdjacentElement('afterend', card);
-  } else if (card.previousElementSibling !== itemDetailsAnchor) {
-    itemDetailsAnchor.insertAdjacentElement('afterend', card);
+  if (itemDetailsAnchor.parentElement) {
+    itemDetailsAnchor.parentElement.insertBefore(card, itemDetailsAnchor);
   }
 
   return card;
@@ -829,12 +826,12 @@ function refreshComparisonCardStyling() {
     return;
   }
 
-  const anchor = findTitleDescriptionAnchor() || findItemDetailsAnchor();
-  if (!anchor) {
+  const itemDetailsAnchor = findItemDetailsAnchor();
+  if (!itemDetailsAnchor) {
     return;
   }
 
-  applyNativeCardStyling(card, anchor);
+  applyNativeCardStyling(card, itemDetailsAnchor);
 }
 
 function renderDarkModeToggleButtons() {
@@ -1085,7 +1082,7 @@ function injectStyles() {
   style.id = STYLE_ID;
   style.textContent = `
     #${CARD_ID} {
-      margin-top: 16px;
+      margin: 0 0 16px;
       border: 0;
       border-radius: var(--nellis-compare-radius, 12px);
       background: var(--nellis-compare-background, #ffffff);
