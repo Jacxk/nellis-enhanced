@@ -30,6 +30,53 @@ This file is a condensed, high-signal handoff for future coding agents.
 - **Watch**: `pnpm run watch:chromium`
 - Output is written to `dist/` (load unpacked extension from that folder).
 
+## Releases (bundled download)
+
+When a GitHub Release is published, CI builds the extension, zips `dist/`, and attaches it to the release as a downloadable asset.
+
+- **Workflow**: `.github/workflows/release-bundle.yml` (runs on `release.published`)
+- **Build command**: `pnpm run build:chromium`
+- **Artifact**: a zip containing the contents of `dist/` (ready to load unpacked in Chromium)
+  - Name pattern: `nellis-enhanced-<tag>-chromium.zip`
+
+### Creating a release
+
+Releases are created via GitHub CLI and should use the date-based tag format.
+
+```bash
+# Example: create the latest release for the current main
+gh release create v2026.4.6 \
+  --title "v2026.4.6" \
+  --notes "$(cat <<'EOF'
+## Summary
+<high-level summary>
+
+## Changes
+### Added
+- <bullets>
+
+### Changed
+- <bullets>
+
+### Fixed
+- <bullets>
+EOF
+)"
+```
+
+Publishing the release triggers the bundling workflow and uploads the zip asset automatically.
+
+Note: for the very first public release you may prefer a shorter, “major additions only” summary; after that, list everything under Added/Changed/Fixed.
+
+## Versioning (date-based)
+
+Extension versions are date-stamped using the **first commit date** in `YYYY.M.D` format (example: `2026.4.6`).
+
+- **Where it lives**:
+  - `package.json` → `version`
+  - `src/chromium/manifest.json` → `version`
+- **Release tags**: use `vYYYY.M.D` (example: `v2026.4.6`)
+
 ## Core implementation notes (content script)
 
 ### The "center of gravity" file
