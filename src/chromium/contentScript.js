@@ -409,7 +409,9 @@ function attachPricePremiumHint() {
 }
 
 function attachBidTotalPremiumHint(root = document) {
-  const forms = root.querySelectorAll('form[data-ax="item-card-bid-form"]');
+  const forms = root.querySelectorAll(
+    'form[data-ax="item-card-bid-form"], form[data-ax="product-page-bid-form"]'
+  );
 
   for (const form of forms) {
     if (!(form instanceof HTMLFormElement)) {
@@ -641,7 +643,9 @@ function hasTooltipRefreshTargets() {
 }
 
 function hasBidTotalHintRefreshTargets(root = document) {
-  const forms = root.querySelectorAll('form[data-ax="item-card-bid-form"]');
+  const forms = root.querySelectorAll(
+    'form[data-ax="item-card-bid-form"], form[data-ax="product-page-bid-form"]'
+  );
   if (!forms.length) {
     return false;
   }
