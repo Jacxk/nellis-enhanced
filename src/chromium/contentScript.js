@@ -818,6 +818,9 @@ function syncDarkModeToggleButtons() {
 }
 
 function readNotificationsEnabled() {
+  // Prefer extension storage so the background worker can read it.
+  // localStorage is retained as a backwards-compatible fallback.
+  // Note: This function is sync; extension storage is synced separately.
   try {
     return localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) === '1';
   } catch {
@@ -828,6 +831,14 @@ function readNotificationsEnabled() {
 function writeNotificationsEnabled(enabled) {
   try {
     localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.set({ [NOTIFICATIONS_STORAGE_KEY]: Boolean(enabled) });
+    }
   } catch {
     /* ignore */
   }
@@ -859,6 +870,12 @@ function syncNotificationsToggleButton() {
 function handleNotificationsToggle() {
   const next = !readNotificationsEnabled();
   writeNotificationsEnabled(next);
+  sendRuntimeMessage({
+    type: 'SET_AUCTION_NOTIFICATIONS_ENABLED',
+    enabled: next,
+  }).catch(() => {
+    /* ignore */
+  });
   syncNotificationsToggleButton();
 
   if (!next) {
