@@ -1,8 +1,12 @@
 import {
   extractNellisItem,
+  findNellisPriceTargets,
+  findNellisTimeTargets,
   findItemDetailsAnchor,
+  hasNellisPriceCards,
   isNellisItemPage,
   isNellisOnlyItemTitle,
+  parseCurrencyAmount,
 } from '../shared/nellisPage.js';
 import { sendRuntimeMessage } from '../shared/extensionApi.js';
 import { getAmazonItemFromHtml } from '../shared/amazonSource.js';
@@ -10,12 +14,15 @@ import { parseAmazonProductPage } from '../shared/productMatcher.js';
 
 const CARD_ID = 'nellis-amazon-compare-card';
 const STYLE_ID = 'nellis-amazon-compare-style';
+const PREMIUM_HINT_CLASS = 'nellis-premium-hint';
+const TIME_HINT_CLASS = 'nellis-time-hint';
 const PURCHASES_EXPORT_ID = 'nellis-purchases-export';
 const RENDER_DEBOUNCE_MS = 250;
 const MAX_RENDER_RETRIES = 20;
 const RENDER_RETRY_MS = 400;
 const PURCHASES_PAGE_SIZE = 30;
 const ROUTE_WATCH_INTERVAL_MS = 500;
+const BUYER_PREMIUM_RATE = 0.15;
 
 let activeRouteKey = '';
 let renderTimer = 0;
@@ -27,6 +34,7 @@ let purchasesExportInFlight = false;
 let purchasesRouteKey = '';
 let purchasesRenderAttempts = 0;
 let lastKnownUrl = window.location.href;
+const closeTimeCache = new Map();
 
 init();
 
@@ -56,7 +64,11 @@ function installRouteListeners() {
   window.addEventListener('load', scheduleRender);
 
   const observer = new MutationObserver(() => {
-    if (isNellisItemPage() || isPurchasesPage()) {
+    if (
+      (isPurchasesPage() && !document.getElementById(PURCHASES_EXPORT_ID)) ||
+      (isNellisItemPage() && !document.getElementById(CARD_ID)) ||
+      hasTooltipRefreshTargets()
+    ) {
       scheduleRender();
     }
   });
@@ -64,6 +76,7 @@ function installRouteListeners() {
   observer.observe(document.documentElement, {
     childList: true,
     subtree: true,
+    characterData: true,
   });
 
   window.setInterval(() => {
@@ -82,6 +95,7 @@ function installRouteListeners() {
 
     if (isNellisItemPage() && !document.getElementById(CARD_ID)) {
       scheduleRender();
+      return;
     }
   }, ROUTE_WATCH_INTERVAL_MS);
 }
@@ -95,6 +109,8 @@ async function renderPageFeatures() {
   const routeKey = `${window.location.pathname}${window.location.search}`;
   injectStyles();
   renderPurchasesExportButton(routeKey);
+  attachPricePremiumHint();
+  attachTimeEndHint();
 
   if (!isNellisItemPage()) {
     cleanupItemComparison(routeKey);
@@ -344,6 +360,200 @@ function removeExistingCard() {
   const card = document.getElementById(CARD_ID);
   if (card) {
     card.remove();
+  }
+}
+
+function attachPricePremiumHint() {
+  const targets = findNellisPriceTargets();
+  const activeTargets = new Set();
+
+  for (const target of targets) {
+    const amount = parseCurrencyAmount(target.priceNode?.textContent);
+    if (amount === null) {
+      continue;
+    }
+
+    const totalWithPremium = formatCurrency(amount * (1 + BUYER_PREMIUM_RATE));
+
+    activeTargets.add(target.container);
+    target.container.classList.add(PREMIUM_HINT_CLASS);
+    target.container.setAttribute('data-premium-tooltip', `Actual total: ${totalWithPremium}`);
+    target.container.dataset.premiumSourceAmount = amount.toFixed(2);
+  }
+
+  removeStaleTooltipTargets(PREMIUM_HINT_CLASS, 'data-premium-tooltip', activeTargets);
+}
+
+function attachTimeEndHint() {
+  const targets = findNellisTimeTargets();
+  const activeTargets = new Set();
+
+  for (const target of targets) {
+    activeTargets.add(target.container);
+    target.container.classList.add(TIME_HINT_CLASS);
+    if (!target.container.hasAttribute('data-time-tooltip')) {
+      target.container.setAttribute('data-time-tooltip', 'Loading...');
+    }
+
+    if (target.container.dataset.timeHintBound !== 'true') {
+      target.container.addEventListener('mouseenter', handleTimeHintHover);
+      target.container.addEventListener('focusin', handleTimeHintHover);
+      target.container.dataset.timeHintBound = 'true';
+    }
+  }
+
+  removeStaleTimeTargets(activeTargets);
+}
+
+function removePricePremiumHints() {
+  for (const node of document.querySelectorAll(`.${PREMIUM_HINT_CLASS}`)) {
+    node.classList.remove(PREMIUM_HINT_CLASS);
+    node.removeAttribute('data-premium-tooltip');
+    if (node instanceof HTMLElement) {
+      delete node.dataset.premiumSourceAmount;
+    }
+  }
+}
+
+function removeTimeEndHints() {
+  for (const node of document.querySelectorAll(`.${TIME_HINT_CLASS}`)) {
+    node.classList.remove(TIME_HINT_CLASS);
+    node.removeAttribute('data-time-tooltip');
+    if (node instanceof HTMLElement && node.dataset.timeHintBound === 'true') {
+      node.removeEventListener('mouseenter', handleTimeHintHover);
+      node.removeEventListener('focusin', handleTimeHintHover);
+      delete node.dataset.timeHintBound;
+    }
+  }
+}
+
+function formatCurrency(value) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+  }).format(value);
+}
+
+async function handleTimeHintHover(event) {
+  const container = event.currentTarget;
+  if (!(container instanceof HTMLElement)) {
+    return;
+  }
+
+  const itemUrl = getItemUrlForTimeTarget(container);
+  if (!itemUrl) {
+    container.setAttribute('data-time-tooltip', '');
+    return;
+  }
+
+  if (closeTimeCache.has(itemUrl)) {
+    container.setAttribute('data-time-tooltip', closeTimeCache.get(itemUrl) || '');
+    return;
+  }
+
+  container.setAttribute('data-time-tooltip', 'Loading...');
+
+  try {
+    const response = await fetch(itemUrl, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        accept: 'text/html,application/xhtml+xml',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Nellis item request failed with status ${response.status}`);
+    }
+
+    const html = await response.text();
+    const tooltipText = extractCloseTimeTooltipFromHtml(html);
+    closeTimeCache.set(itemUrl, tooltipText);
+    container.setAttribute('data-time-tooltip', tooltipText);
+  } catch (error) {
+    console.error('[NellisCompare] Failed to resolve exact close time:', error);
+    container.setAttribute('data-time-tooltip', '');
+  }
+}
+
+function getItemUrlForTimeTarget(container) {
+  const itemCard = container.closest('[data-ax="item-card-container"]');
+  const cardLink = itemCard?.querySelector(
+    'a[data-ax="item-card-title-link"], a[data-ax="item-card-image-link"]'
+  );
+  const href = cardLink?.getAttribute('href');
+
+  if (href) {
+    return new URL(href, window.location.origin).toString();
+  }
+
+  if (container.closest('#bid-section') && isNellisItemPage()) {
+    return window.location.href;
+  }
+
+  return '';
+}
+
+function extractCloseTimeTooltipFromHtml(html) {
+  const match = html.match(/"closeTime":\{"__type":"Date","value":"([^"]+)"\}/);
+  if (!match?.[1]) {
+    return '';
+  }
+
+  const closeTime = new Date(match[1]);
+  if (Number.isNaN(closeTime.getTime())) {
+    return '';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(closeTime);
+}
+
+function hasTooltipRefreshTargets() {
+  if (!hasNellisPriceCards()) {
+    return false;
+  }
+
+  return (
+    findNellisPriceTargets().some((target) => {
+      if (!target.container.classList.contains(PREMIUM_HINT_CLASS)) {
+        return true;
+      }
+
+      const amount = parseCurrencyAmount(target.priceNode?.textContent);
+      if (amount === null || !(target.container instanceof HTMLElement)) {
+        return false;
+      }
+
+      return target.container.dataset.premiumSourceAmount !== amount.toFixed(2);
+    }) ||
+    findNellisTimeTargets().some((target) => !target.container.classList.contains(TIME_HINT_CLASS))
+  );
+}
+
+function removeStaleTooltipTargets(className, attributeName, activeTargets) {
+  for (const node of document.querySelectorAll(`.${className}`)) {
+    if (!activeTargets.has(node)) {
+      node.classList.remove(className);
+      node.removeAttribute(attributeName);
+    }
+  }
+}
+
+function removeStaleTimeTargets(activeTargets) {
+  for (const node of document.querySelectorAll(`.${TIME_HINT_CLASS}`)) {
+    if (!activeTargets.has(node)) {
+      node.classList.remove(TIME_HINT_CLASS);
+      node.removeAttribute('data-time-tooltip');
+
+      if (node instanceof HTMLElement && node.dataset.timeHintBound === 'true') {
+        node.removeEventListener('mouseenter', handleTimeHintHover);
+        node.removeEventListener('focusin', handleTimeHintHover);
+        delete node.dataset.timeHintBound;
+      }
+    }
   }
 }
 
@@ -753,6 +963,102 @@ function injectStyles() {
 
     #${CARD_ID} .nellis-compare__button:hover {
       filter: brightness(0.98);
+    }
+
+    .${PREMIUM_HINT_CLASS} {
+      position: relative;
+      cursor: default;
+      overflow: visible;
+    }
+
+    .${PREMIUM_HINT_CLASS}::after {
+      content: attr(data-premium-tooltip);
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 8px);
+      transform: translateX(-50%);
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(17, 24, 39, 0.94);
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.2;
+      font-weight: 600;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease;
+      z-index: 9999;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
+    }
+
+    .${PREMIUM_HINT_CLASS}::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 2px);
+      transform: translateX(-50%);
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 6px solid rgba(17, 24, 39, 0.94);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease;
+      z-index: 9999;
+    }
+
+    .${PREMIUM_HINT_CLASS}:hover::after,
+    .${PREMIUM_HINT_CLASS}:hover::before {
+      opacity: 1;
+    }
+
+    .${TIME_HINT_CLASS} {
+      position: relative;
+      cursor: default;
+      overflow: visible;
+    }
+
+    .${TIME_HINT_CLASS}::after {
+      content: attr(data-time-tooltip);
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 8px);
+      transform: translateX(-50%);
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(17, 24, 39, 0.94);
+      color: #fff;
+      font-size: 12px;
+      line-height: 1.2;
+      font-weight: 600;
+      white-space: nowrap;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease;
+      z-index: 9999;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
+    }
+
+    .${TIME_HINT_CLASS}::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 2px);
+      transform: translateX(-50%);
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 6px solid rgba(17, 24, 39, 0.94);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease;
+      z-index: 9999;
+    }
+
+    .${TIME_HINT_CLASS}:hover::after,
+    .${TIME_HINT_CLASS}:hover::before,
+    .${TIME_HINT_CLASS}:focus-within::after,
+    .${TIME_HINT_CLASS}:focus-within::before {
+      opacity: 1;
     }
 
     .nellis-export-button {
