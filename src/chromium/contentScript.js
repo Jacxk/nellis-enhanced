@@ -23,11 +23,18 @@ const DARK_MODE_TOGGLE_CLASS = 'nellis-dark-mode-toggle';
 const DARK_MODE_TOGGLE_ID = 'nellis-dark-mode-toggle';
 const DARK_MODE_HTML_CLASS = 'nellis-dark-mode';
 const DARK_MODE_STORAGE_KEY = 'nellisAuctionDarkMode';
+const NOTIFICATIONS_TOGGLE_CLASS = 'nellis-notifications-toggle';
+const NOTIFICATIONS_TOGGLE_ID = 'nellis-notifications-toggle';
+const NOTIFICATIONS_STORAGE_KEY = 'nellisAuctionNotificationsEnabled';
 const BID_TOTAL_HINT_CLASS = 'nellis-bid-total-hint';
 const DARK_MODE_ICON_MOON =
   '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" width="17" height="17" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" /></svg>';
 const DARK_MODE_ICON_SUN =
   '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" width="17" height="17" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>';
+const NOTIFICATIONS_ICON_BELL =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5-6.71V3a2 2 0 1 0-4 0v1.29A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>';
+const NOTIFICATIONS_ICON_BELL_OFF =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M2.1 3.51 3.51 2.1l18.38 18.38-1.41 1.41-2.07-2.07H3v-1l2-2v-5c0-.98.2-1.92.56-2.78L2.1 3.51Zm14.72 14.72L7.06 8.47C6.73 9.23 6.55 10.1 6.55 11v5l-1.5 1.5h11.77ZM9.8 20a2.5 2.5 0 0 0 4.4 0H9.8Zm6.85-6.85-.99-.99V11c0-1.85-.83-3.51-2.14-4.62V3a2 2 0 0 0-2.31-1.97l-.7-.7A3.49 3.49 0 0 1 14 3v1.29A7 7 0 0 1 19 11v5l-2.17-2.17Z"/></svg>';
 const RENDER_DEBOUNCE_MS = 250;
 const MAX_RENDER_RETRIES = 20;
 const RENDER_RETRY_MS = 400;
@@ -46,12 +53,16 @@ let purchasesRouteKey = '';
 let purchasesRenderAttempts = 0;
 let lastKnownUrl = window.location.href;
 const closeTimeCache = new Map();
+let activeAuctionsPoller = 0;
+const activeAuctionsLastSecondsByItem = new Map();
+const activeAuctionsNotifiedItems = new Set();
 
 init();
 
 function init() {
   injectStyles();
   applyStoredDarkMode();
+  cleanupActiveAuctionsNotifications();
   installRouteListeners();
   scheduleRender();
 }
@@ -133,9 +144,11 @@ async function renderPageFeatures() {
   injectStyles();
   renderPurchasesExportButton(routeKey);
   renderDarkModeToggleButtons();
+  renderNotificationsToggleButtons();
   attachPricePremiumHint();
   attachBidTotalPremiumHint();
   attachTimeEndHint();
+  syncActiveAuctionsNotifications(routeKey);
 
   if (!isNellisItemPage()) {
     cleanupItemComparison(routeKey);
@@ -773,6 +786,10 @@ function needsDarkModeToggleRender() {
   return isNellisAuctionSite() && !document.getElementById(DARK_MODE_TOGGLE_ID);
 }
 
+function needsNotificationsToggleRender() {
+  return isNellisAuctionSite() && Boolean(findDashboardAuctionsSidebar()) && !document.getElementById(NOTIFICATIONS_TOGGLE_ID);
+}
+
 function applyStoredDarkMode() {
   try {
     if (localStorage.getItem(DARK_MODE_STORAGE_KEY) === '1') {
@@ -798,6 +815,70 @@ function syncDarkModeToggleButtons() {
   btn.setAttribute('aria-label', label);
   btn.title = label;
   btn.innerHTML = isDark ? DARK_MODE_ICON_SUN : DARK_MODE_ICON_MOON;
+}
+
+function readNotificationsEnabled() {
+  try {
+    return localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeNotificationsEnabled(enabled) {
+  try {
+    localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+}
+
+function syncNotificationsToggleButton() {
+  const btn = document.getElementById(NOTIFICATIONS_TOGGLE_ID);
+  if (!(btn instanceof HTMLElement)) {
+    return;
+  }
+
+  const enabled = readNotificationsEnabled();
+  const label = enabled ? 'Disable auction notifications' : 'Enable auction notifications';
+
+  btn.setAttribute('aria-pressed', String(enabled));
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+  const permissionLevel = btn.dataset.permissionLevel || 'unknown';
+  const isBlocked = permissionLevel === 'denied';
+  btn.innerHTML = `
+    <span class="nellis-notifications-toggle__icon" aria-hidden="true">
+      ${enabled ? NOTIFICATIONS_ICON_BELL : NOTIFICATIONS_ICON_BELL_OFF}
+    </span>
+    <span class="nellis-notifications-toggle__label">3-min alerts</span>
+    <span class="nellis-notifications-toggle__state">${isBlocked ? 'Blocked' : enabled ? 'On' : 'Off'}</span>
+  `;
+}
+
+function handleNotificationsToggle() {
+  const next = !readNotificationsEnabled();
+  writeNotificationsEnabled(next);
+  syncNotificationsToggleButton();
+
+  if (!next) {
+    cleanupActiveAuctionsNotifications();
+  } else {
+    scheduleRender();
+  }
+}
+
+function handleNotificationsToggleKeydown(event) {
+  if (!(event instanceof KeyboardEvent)) {
+    return;
+  }
+
+  if (event.key !== 'Enter' && event.key !== ' ') {
+    return;
+  }
+
+  event.preventDefault();
+  handleNotificationsToggle();
 }
 
 function handleDarkModeToggle() {
@@ -863,6 +944,301 @@ function renderDarkModeToggleButtons() {
   }
 
   syncDarkModeToggleButtons();
+}
+
+function renderNotificationsToggleButtons() {
+  for (const el of document.querySelectorAll(`.${NOTIFICATIONS_TOGGLE_CLASS}`)) {
+    if (el.id !== NOTIFICATIONS_TOGGLE_ID) {
+      el.remove();
+    }
+  }
+
+  if (!isNellisAuctionSite()) {
+    const existing = document.getElementById(NOTIFICATIONS_TOGGLE_ID);
+    if (existing) {
+      existing.remove();
+    }
+    return;
+  }
+
+  const sidebar = findDashboardAuctionsSidebar();
+  if (!sidebar) {
+    const existing = document.getElementById(NOTIFICATIONS_TOGGLE_ID);
+    if (existing) {
+      existing.remove();
+    }
+    return;
+  }
+
+  let button = document.getElementById(NOTIFICATIONS_TOGGLE_ID);
+  if (!button) {
+    button = document.createElement('div');
+    button.id = NOTIFICATIONS_TOGGLE_ID;
+    button.className = NOTIFICATIONS_TOGGLE_CLASS;
+    button.setAttribute('role', 'button');
+    button.setAttribute('tabindex', '0');
+    button.addEventListener('click', handleNotificationsToggle);
+    button.addEventListener('keydown', handleNotificationsToggleKeydown);
+  }
+
+  const insertionPoint = findDashboardSidebarInsertionPoint(sidebar);
+  if (insertionPoint && button.parentElement !== insertionPoint) {
+    insertionPoint.appendChild(button);
+  } else if (!button.parentElement) {
+    sidebar.appendChild(button);
+  }
+
+  void syncNotificationsPermissionState(button);
+  syncNotificationsToggleButton();
+}
+
+async function syncNotificationsPermissionState(button) {
+  if (!(button instanceof HTMLElement)) {
+    return;
+  }
+
+  try {
+    const response = await sendRuntimeMessage({ type: 'GET_NOTIFICATION_PERMISSION_LEVEL' });
+    if (typeof response?.level === 'string') {
+      button.dataset.permissionLevel = response.level;
+    } else {
+      button.dataset.permissionLevel = 'unknown';
+    }
+  } catch {
+    button.dataset.permissionLevel = 'unknown';
+  }
+}
+
+function findDashboardAuctionsSidebar(root = document) {
+  const containers = Array.from(
+    root.querySelectorAll(
+      'div[class~="hidden"][class~="md:flex"][class~="flex-col"][class~="py-4"][class~="gap-3"][class~="bg-white"][class~="rounded-itemCard"][class~="border"][class~="border-neutral-400"]'
+    )
+  );
+
+  for (const container of containers) {
+    if (!(container instanceof HTMLElement)) {
+      continue;
+    }
+
+    if (container.querySelector('a[href="/dashboard/auctions/active"]')) {
+      return container;
+    }
+  }
+
+  return null;
+}
+
+function findDashboardSidebarInsertionPoint(sidebar) {
+  if (!(sidebar instanceof HTMLElement)) {
+    return null;
+  }
+
+  // Prefer inserting in the list block (before Logout).
+  const listBlock = sidebar.querySelector('div[class~="flex"][class~="flex-col"][class~="gap-3"][class~="bg-white"]');
+  if (listBlock instanceof HTMLElement) {
+    return listBlock;
+  }
+
+  return sidebar;
+}
+
+function isActiveAuctionsPage(locationObject = window.location) {
+  return locationObject.pathname === '/dashboard/auctions/active';
+}
+
+function syncActiveAuctionsNotifications(routeKey) {
+  if (!isActiveAuctionsPage() || !readNotificationsEnabled()) {
+    cleanupActiveAuctionsNotifications();
+    return;
+  }
+
+  if (activeAuctionsPoller) {
+    return;
+  }
+
+  activeAuctionsLastSecondsByItem.clear();
+  activeAuctionsNotifiedItems.clear();
+
+  activeAuctionsPoller = window.setInterval(() => {
+    try {
+      pollActiveAuctionsForThreeMinuteWarning();
+    } catch (error) {
+      console.error('[NellisCompare] Active auctions poll error:', error);
+    }
+  }, 1500);
+}
+
+function cleanupActiveAuctionsNotifications() {
+  if (activeAuctionsPoller) {
+    window.clearInterval(activeAuctionsPoller);
+    activeAuctionsPoller = 0;
+  }
+  activeAuctionsLastSecondsByItem.clear();
+  activeAuctionsNotifiedItems.clear();
+}
+
+function pollActiveAuctionsForThreeMinuteWarning(root = document) {
+  if (!isActiveAuctionsPage() || !readNotificationsEnabled()) {
+    return;
+  }
+
+  const cards = Array.from(root.querySelectorAll('[data-ax="item-card-container"]'));
+  for (const card of cards) {
+    if (!(card instanceof HTMLElement)) {
+      continue;
+    }
+
+    const itemUrl = getItemUrlFromItemCard(card);
+    if (!itemUrl) {
+      continue;
+    }
+
+    const secondsLeft = getSecondsLeftFromItemCard(card);
+    if (!Number.isFinite(secondsLeft) || secondsLeft <= 0) {
+      continue;
+    }
+
+    const previousSeconds = activeAuctionsLastSecondsByItem.get(itemUrl);
+    activeAuctionsLastSecondsByItem.set(itemUrl, secondsLeft);
+
+    if (activeAuctionsNotifiedItems.has(itemUrl)) {
+      continue;
+    }
+
+    const crossedThreeMinutes =
+      typeof previousSeconds === 'number' ? previousSeconds > 180 && secondsLeft <= 180 : false;
+    const loadedNearThreshold = previousSeconds == null && secondsLeft <= 180 && secondsLeft >= 170;
+
+    if (!crossedThreeMinutes && !loadedNearThreshold) {
+      continue;
+    }
+
+    activeAuctionsNotifiedItems.add(itemUrl);
+
+    const itemTitle = getTitleFromItemCard(card) || 'Auction item';
+    sendRuntimeMessage({
+      type: 'POST_NOTIFICATION',
+      notificationId: buildNotificationId(itemUrl),
+      title: itemTitle,
+      message: '3 minutes left',
+      url: itemUrl,
+    }).catch((error) => {
+      console.error('[NellisCompare] Failed to send notification message:', error);
+    });
+  }
+}
+
+function buildNotificationId(itemUrl) {
+  const url = String(itemUrl || '');
+  const token = url.replace(/[^a-z0-9]/gi, '_').slice(-120);
+  return `nellis-3min-${token}`;
+}
+
+function getTitleFromItemCard(card) {
+  const titleLink = card.querySelector('a[data-ax="item-card-title-link"]');
+  const titleText = titleLink?.textContent?.trim();
+  if (titleText) {
+    return titleText;
+  }
+
+  const headings = Array.from(card.querySelectorAll('h1, h2, h3, [role="heading"]'));
+  for (const node of headings) {
+    const text = node?.textContent?.trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  return '';
+}
+
+function getItemUrlFromItemCard(card) {
+  const cardLink = card.querySelector('a[data-ax="item-card-title-link"], a[data-ax="item-card-image-link"]');
+  const href = cardLink?.getAttribute('href');
+  if (!href) {
+    return '';
+  }
+  return new URL(href, window.location.origin).toString();
+}
+
+function getSecondsLeftFromItemCard(card) {
+  const timeLabelNodes = Array.from(card.querySelectorAll('p, span, strong, div')).filter((node) =>
+    node?.textContent?.trim().toLowerCase() === 'time left'
+  );
+
+  const candidates = [];
+
+  for (const labelNode of timeLabelNodes) {
+    const parent = labelNode.parentElement;
+    if (parent) {
+      candidates.push(...Array.from(parent.querySelectorAll('p, span, strong, div')));
+    }
+  }
+
+  candidates.push(...Array.from(card.querySelectorAll('[data-ax*="time"], [data-testid*="time"]')));
+  candidates.push(...Array.from(card.querySelectorAll('p, span, strong, div')));
+
+  for (const node of candidates) {
+    const text = node?.textContent?.trim();
+    if (!text || text.length > 32) {
+      continue;
+    }
+
+    const seconds = parseTimeLeftToSeconds(text);
+    if (Number.isFinite(seconds)) {
+      return seconds;
+    }
+  }
+
+  return NaN;
+}
+
+function parseTimeLeftToSeconds(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) {
+    return NaN;
+  }
+
+  // 01:23:45 or 12:34
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(text)) {
+    const parts = text.split(':').map((part) => Number(part));
+    if (parts.some((part) => !Number.isFinite(part))) {
+      return NaN;
+    }
+    if (parts.length === 2) {
+      const [m, s] = parts;
+      return m * 60 + s;
+    }
+    const [h, m, s] = parts;
+    return h * 3600 + m * 60 + s;
+  }
+
+  // "1h 2m 3s", "3m 12s", "180s"
+  const unitMatch = text.match(
+    /^(?:(\d+)\s*h(?:ours?)?\s*)?(?:(\d+)\s*m(?:in(?:utes?)?)?\s*)?(?:(\d+)\s*s(?:ec(?:onds?)?)?\s*)?$/
+  );
+  if (unitMatch) {
+    const hours = unitMatch[1] ? Number(unitMatch[1]) : 0;
+    const mins = unitMatch[2] ? Number(unitMatch[2]) : 0;
+    const secs = unitMatch[3] ? Number(unitMatch[3]) : 0;
+    const total = hours * 3600 + mins * 60 + secs;
+    if (total > 0) {
+      return total;
+    }
+  }
+
+  // "3 minutes", "2 mins", "45 seconds"
+  const minutesOnly = text.match(/^(\d+)\s*(?:m|min|mins|minute|minutes)$/);
+  if (minutesOnly) {
+    return Number(minutesOnly[1]) * 60;
+  }
+  const secondsOnly = text.match(/^(\d+)\s*(?:s|sec|secs|second|seconds)$/);
+  if (secondsOnly) {
+    return Number(secondsOnly[1]);
+  }
+
+  return NaN;
 }
 
 async function handlePurchasesExport(event) {
@@ -1951,6 +2327,65 @@ function injectStyles() {
       color: #e5e5e5;
       border-color: rgba(115, 115, 115, 0.45);
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    }
+
+    #${NOTIFICATIONS_TOGGLE_ID} {
+      width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 22px) minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 16px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      text-align: left;
+      border-radius: 8px;
+    }
+
+    #${NOTIFICATIONS_TOGGLE_ID}:hover {
+      background-color: rgb(245, 245, 245);
+    }
+
+    #${NOTIFICATIONS_TOGGLE_ID}:focus-visible {
+      outline: 1px solid rgba(148, 163, 184, 0.85);
+      outline-offset: 1px;
+    }
+
+    #${NOTIFICATIONS_TOGGLE_ID} .nellis-notifications-toggle__icon svg {
+      display: block;
+      fill: currentColor;
+    }
+
+    #${NOTIFICATIONS_TOGGLE_ID} .nellis-notifications-toggle__label {
+      font-size: 14px;
+      font-weight: 600;
+      color: rgb(38, 38, 38);
+    }
+
+    #${NOTIFICATIONS_TOGGLE_ID} .nellis-notifications-toggle__state {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 2px 10px;
+      border-radius: 9999px;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      background: rgba(15, 23, 42, 0.04);
+      color: rgb(64, 64, 64);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${NOTIFICATIONS_TOGGLE_ID}:hover {
+      background-color: rgba(255, 255, 255, 0.06);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${NOTIFICATIONS_TOGGLE_ID} .nellis-notifications-toggle__label {
+      color: #e5e5e5;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${NOTIFICATIONS_TOGGLE_ID} .nellis-notifications-toggle__state {
+      border-color: rgba(203, 213, 225, 0.28);
+      background: rgba(255, 255, 255, 0.08);
+      color: #e5e5e5;
     }
 
     @media (max-width: 720px) {
