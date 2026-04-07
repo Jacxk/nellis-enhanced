@@ -6,6 +6,7 @@
   "permissions": [],
   "host_permissions": [
     "https://www.nellisauction.com/*",
+    "https://nellisauction.com/*",
     "https://www.amazon.com/*"
   ],
   "background": {
@@ -15,7 +16,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.nellisauction.com/*"
+        "https://www.nellisauction.com/*",
+        "https://nellisauction.com/*"
       ],
       "js": [
         "contentScript.bundle.js"

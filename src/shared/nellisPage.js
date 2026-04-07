@@ -26,10 +26,7 @@ const NELLIS_ONLY_TITLE_PATTERNS = [
 ];
 
 export function isNellisItemPage(locationObject = window.location) {
-  return (
-    locationObject.hostname === 'www.nellisauction.com' &&
-    /^\/p\/[^/]+\/\d+/.test(locationObject.pathname)
-  );
+  return isNellisAuctionSite(locationObject) && /^\/p\/[^/]+\/\d+/.test(locationObject.pathname);
 }
 
 export function extractNellisItem(root = document) {
