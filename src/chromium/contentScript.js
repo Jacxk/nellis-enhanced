@@ -1719,6 +1719,60 @@ function injectStyles() {
       color: #fed7aa !important;
     }
 
+    /* Orange surface used by product-page sticky bars + bid-section hint cards */
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-200/"],
+    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-200"],
+    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-200"],
+    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-200"] {
+      background-color: #7c2d12 !important;
+      color: #ffedd5 !important;
+      border-color: rgba(253, 186, 116, 0.55) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] [class*="text-gray-600"],
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] strong,
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] span,
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] h6 {
+      color: #fff7ed !important;
+    }
+
+    /* Product page sticky header (breadcrumb / outbid bar) */
+    html.${DARK_MODE_HTML_CLASS} [class~="sticky"][class~="bg-orange-200"] {
+      background-color: #5c280d !important;
+      border-bottom: 1px solid rgba(253, 186, 116, 0.35) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class~="sticky"][class~="bg-orange-200"] [class~="bg-white"] {
+      background-color: #262626 !important;
+      color: #f5f5f5 !important;
+      border-color: rgba(115, 115, 115, 0.4) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class~="sticky"][class~="bg-orange-200"] svg[class*="fill-"] path,
+    html.${DARK_MODE_HTML_CLASS} [class~="sticky"][class~="bg-orange-200"] svg path {
+      fill: #f5f5f5 !important;
+    }
+
+    /* Bid section: ensure orange hint cards don't keep dark gray text */
+    html.${DARK_MODE_HTML_CLASS} #bid-section [class~="bg-orange-200"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} #bid-section [class~="bg-orange-200"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} #bid-section [class~="bg-orange-200"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} #bid-section [class~="bg-orange-200"] [class*="text-gray-600"] {
+      color: #fff7ed !important;
+    }
+
+    /* Bid section: keep orange top divider, hide other borders (OUTBID block) */
+    html.${DARK_MODE_HTML_CLASS} #bid-section [class~="border"][class*="border-t-orange-200"] {
+      border-left-color: transparent !important;
+      border-right-color: transparent !important;
+      border-bottom-color: transparent !important;
+      border-top-color: rgba(253, 186, 116, 0.55) !important;
+    }
+
     /* Lighter orange surfaces (e.g. thank-you strip) — use class~ to avoid matching bg-orange-500 */
     html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-50"],
     html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-50/"],
