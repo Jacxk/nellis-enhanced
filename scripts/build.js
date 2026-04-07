@@ -4,9 +4,10 @@
  */
 
 import { build } from 'esbuild';
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import sharp from 'sharp';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = join(__filename, '..');
@@ -67,18 +68,25 @@ async function bundle() {
   // Copy manifest
   copyFileSync(manifestSrc, join(DIST_DIR, 'manifest.json'));
 
-  // Create icons directory (placeholder - you should add real icons)
+  // Build icons
   const iconsDir = join(DIST_DIR, 'icons');
   mkdirSync(iconsDir, { recursive: true });
 
-  // Create placeholder icon files (1x1 transparent PNG)
-  const placeholderPng = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
-    'base64'
+  const iconSourceJpg = join(ROOT_DIR, 'public', 'icon.jpg');
+
+  if (!existsSync(iconSourceJpg)) {
+    throw new Error(`Missing icon source file: ${iconSourceJpg}`);
+  }
+
+  const iconSizes = [16, 48, 128];
+  await Promise.all(
+    iconSizes.map((size) =>
+      sharp(iconSourceJpg)
+        .resize(size, size, { fit: 'cover' })
+        .png()
+        .toFile(join(iconsDir, `icon${size}.png`))
+    )
   );
-  writeFileSync(join(iconsDir, 'icon16.png'), placeholderPng);
-  writeFileSync(join(iconsDir, 'icon48.png'), placeholderPng);
-  writeFileSync(join(iconsDir, 'icon128.png'), placeholderPng);
 
   console.log(`Build complete! Output in ${DIST_DIR}`);
   console.log(`\nTo load in Chrome:`);
