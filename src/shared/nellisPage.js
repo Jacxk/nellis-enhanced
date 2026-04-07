@@ -184,18 +184,31 @@ export function findItemDetailsAnchor(root = document) {
   );
 }
 
+/**
+ * Finds the product **description** block only (no Item Details / title fallbacks).
+ * When absent, callers should use `findItemDetailsAnchor()` instead.
+ */
 export function findTitleDescriptionAnchor(root = document) {
-  // 1) Prefer a dedicated description/details card (more stable than the h1 header region).
   const descriptionSelectorMatch = [
     '[data-ax*="description"]',
     '[data-testid*="description"]',
+    '[class*="description-card"]',
+    '[class*="DescriptionCard"]',
+    '[class*="__description"]',
     '[class*="description"]',
     '[class*="Description"]',
-    '[class*="details"]',
-    '[class*="Details"]',
   ]
     .map((selector) => root.querySelector(selector))
-    .find(Boolean);
+    .find((node) => {
+      if (!node) {
+        return false;
+      }
+      const haystack = `${node.getAttribute('class') || ''} ${node.getAttribute('data-ax') || ''}`.toLowerCase();
+      if (haystack.includes('item-details') || haystack.includes('itemdetails')) {
+        return false;
+      }
+      return true;
+    });
 
   if (descriptionSelectorMatch) {
     return (
@@ -206,11 +219,13 @@ export function findTitleDescriptionAnchor(root = document) {
     );
   }
 
-  // 2) Headings-based fallback: find a "Description" heading and use its container.
   const headings = Array.from(root.querySelectorAll('h1, h2, h3, h4, [role="heading"]'));
   const descriptionHeading = headings.find((node) => {
     const text = node.textContent?.trim().toLowerCase() || '';
-    return text === 'description' || text.includes('item description') || text.includes('description');
+    if (text.includes('item details')) {
+      return false;
+    }
+    return text === 'description' || text.includes('item description');
   });
 
   if (descriptionHeading) {
@@ -223,38 +238,7 @@ export function findTitleDescriptionAnchor(root = document) {
     );
   }
 
-  const selectorMatch = [
-    '[data-ax*="product-page-title"]',
-    '[data-ax*="product-title"]',
-    '[data-testid*="product-title"]',
-    '[class*="product-title"]',
-    '[class*="ProductTitle"]',
-    '[class*="title-card"]',
-    '[class*="TitleCard"]',
-    '[class*="description-card"]',
-    '[class*="DescriptionCard"]',
-  ]
-    .map((selector) => root.querySelector(selector))
-    .find(Boolean);
-
-  if (selectorMatch) {
-    return selectorMatch.closest('section') || selectorMatch.closest('article') || selectorMatch;
-  }
-
-  const titleNode = root.querySelector('main h1, h1');
-  if (!titleNode) {
-    return null;
-  }
-
-  // Prefer a nearby "card-ish" container for the title/description.
-  const candidates = [
-    titleNode.closest('section'),
-    titleNode.closest('article'),
-    titleNode.closest('div'),
-    titleNode.parentElement,
-  ].filter(Boolean);
-
-  return candidates[0] || null;
+  return null;
 }
 
 function extractText(root, selectors) {

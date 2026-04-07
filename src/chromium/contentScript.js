@@ -157,9 +157,14 @@ async function renderComparisonCard(routeKey) {
   }
 
   const nellisItem = extractNellisItem();
-  const primaryAnchor = findTitleDescriptionAnchor() || findItemDetailsAnchor();
+  const descriptionAnchor = findTitleDescriptionAnchor();
+  const itemDetailsAnchor = findItemDetailsAnchor();
+  const styleAnchor = descriptionAnchor || itemDetailsAnchor;
+  const placementTarget = descriptionAnchor || itemDetailsAnchor;
+  /** When there is no description block, insert the card immediately before Item Details. */
+  const placementMode = descriptionAnchor ? 'afterend' : 'beforebegin';
 
-  if (!nellisItem?.title || !primaryAnchor) {
+  if (!nellisItem?.title || !styleAnchor || !placementTarget) {
     if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
       pendingRouteAttempts += 1;
       window.setTimeout(scheduleRender, RENDER_RETRY_MS);
@@ -188,7 +193,7 @@ async function renderComparisonCard(routeKey) {
   activeRouteKey = routeKey;
   lastRenderedTitle = nellisItem.title;
 
-  const card = ensureCard(primaryAnchor);
+  const card = ensureCard(styleAnchor, placementTarget, placementMode);
   updateCardState(card, {
     state: 'loading',
     nellisItem,
@@ -252,7 +257,7 @@ function cleanupItemComparison(routeKey) {
   removeExistingCard();
 }
 
-function ensureCard(itemDetailsAnchor) {
+function ensureCard(styleAnchor, placementTarget, placementMode) {
   let card = document.getElementById(CARD_ID);
 
   if (!card) {
@@ -280,12 +285,12 @@ function ensureCard(itemDetailsAnchor) {
     `;
   }
 
-  applyNativeCardStyling(card, itemDetailsAnchor);
+  applyNativeCardStyling(card, styleAnchor);
 
-  if (card.parentElement !== itemDetailsAnchor.parentElement) {
-    itemDetailsAnchor.insertAdjacentElement('afterend', card);
-  } else if (card.previousElementSibling !== itemDetailsAnchor) {
-    itemDetailsAnchor.insertAdjacentElement('afterend', card);
+  if (placementMode === 'beforebegin' && placementTarget.parentElement) {
+    placementTarget.parentElement.insertBefore(card, placementTarget);
+  } else {
+    placementTarget.insertAdjacentElement('afterend', card);
   }
 
   return card;
@@ -1085,7 +1090,7 @@ function injectStyles() {
   style.id = STYLE_ID;
   style.textContent = `
     #${CARD_ID} {
-      margin-top: 16px;
+      margin: 16px 0;
       border: 0;
       border-radius: var(--nellis-compare-radius, 12px);
       background: var(--nellis-compare-background, #ffffff);
