@@ -820,6 +820,21 @@ function handleDarkModeToggle() {
   }
 
   syncDarkModeToggleButtons();
+  refreshComparisonCardStyling();
+}
+
+function refreshComparisonCardStyling() {
+  const card = document.getElementById(CARD_ID);
+  if (!card || !isNellisItemPage()) {
+    return;
+  }
+
+  const itemDetailsAnchor = findItemDetailsAnchor();
+  if (!itemDetailsAnchor) {
+    return;
+  }
+
+  applyNativeCardStyling(card, itemDetailsAnchor);
 }
 
 function renderDarkModeToggleButtons() {
@@ -1071,7 +1086,7 @@ function injectStyles() {
   style.textContent = `
     #${CARD_ID} {
       margin-top: 16px;
-      border: 1px solid var(--nellis-compare-border, rgba(15, 23, 42, 0.08));
+      border: 0;
       border-radius: var(--nellis-compare-radius, 12px);
       background: var(--nellis-compare-background, #ffffff);
       box-shadow: var(--nellis-compare-shadow, 0 6px 18px rgba(15, 23, 42, 0.06));
@@ -1129,8 +1144,8 @@ function injectStyles() {
       width: 92px;
       height: 92px;
       border-radius: 12px;
-      background: rgba(255, 255, 255, 0.7);
-      border: 1px solid var(--nellis-compare-border, rgba(15, 23, 42, 0.08));
+      background: #ffffff;
+      border: 0;
       display: grid;
       place-items: center;
       overflow: hidden;
@@ -1386,7 +1401,7 @@ function injectStyles() {
     }
 
     html.${DARK_MODE_HTML_CLASS} body {
-      background-color: #0a0a0a !important;
+      background-color: #1f1f1f !important;
       color: #e5e5e5 !important;
     }
 
@@ -1437,7 +1452,7 @@ function injectStyles() {
 
     html.${DARK_MODE_HTML_CLASS} .bg-white,
     html.${DARK_MODE_HTML_CLASS} [class*="bg-white"]:not([class*="before:bg-white"]) {
-      background-color: #141414 !important;
+      background-color: #1f1f1f !important;
     }
 
     /* Search / listing “Filters” sticky bar: no solid strip (bg-white + lg:bg-neutral-100) */
@@ -1460,11 +1475,11 @@ function injectStyles() {
     }
 
     html.${DARK_MODE_HTML_CLASS} [class*="bg-transition-background"] {
-      background-color: #0a0a0a !important;
+      background-color: #1f1f1f !important;
     }
 
     html.${DARK_MODE_HTML_CLASS} [class*="before:bg-white"]::before {
-      background-color: #141414 !important;
+      background-color: #1f1f1f !important;
     }
 
     html.${DARK_MODE_HTML_CLASS} [class*="hover:bg-neutral-100"]:hover,
@@ -1625,7 +1640,7 @@ function injectStyles() {
     }
 
     html.${DARK_MODE_HTML_CLASS} [class*="ring-offset-white"] {
-      --tw-ring-offset-color: #0a0a0a !important;
+      --tw-ring-offset-color: #1f1f1f !important;
     }
 
     html.${DARK_MODE_HTML_CLASS} [class*="disabled:bg-gray-700"]:disabled {
@@ -1654,6 +1669,11 @@ function injectStyles() {
     html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] {
       background-color: #3d2326 !important;
       color: #f5f0f0 !important;
+    }
+
+    /* Search header (CSS-module) */
+    html.${DARK_MODE_HTML_CLASS} [class*="__search-header"] h2 {
+      color: #fafafa !important;
     }
 
     html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] p,
@@ -1769,12 +1789,24 @@ function injectStyles() {
       color: #fff7ed !important;
     }
 
-    /* Bid section: keep orange top divider, hide other borders (OUTBID block) */
-    html.${DARK_MODE_HTML_CLASS} #bid-section [class~="border"][class*="border-t-orange-200"] {
+    /* Bid section: keep top divider, remove box borders (OUTBID/WINNING blocks use md:border) */
+    html.${DARK_MODE_HTML_CLASS} #bid-section [class*="md:border"][class*="border-t-orange-200"],
+    html.${DARK_MODE_HTML_CLASS} #bid-section [class*="md:border"][class*="border-t-emerald-200"] {
+      border-left-width: 0 !important;
+      border-right-width: 0 !important;
+      border-bottom-width: 0 !important;
+      border-top-width: 1px !important;
       border-left-color: transparent !important;
       border-right-color: transparent !important;
       border-bottom-color: transparent !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #bid-section [class*="md:border"][class*="border-t-orange-200"] {
       border-top-color: rgba(253, 186, 116, 0.55) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #bid-section [class*="md:border"][class*="border-t-emerald-200"] {
+      border-top-color: rgba(52, 211, 153, 0.55) !important;
     }
 
     /* Lighter orange surfaces (e.g. thank-you strip) — use class~ to avoid matching bg-orange-500 */
@@ -1915,11 +1947,12 @@ function injectStyles() {
     }
 
     html.${DARK_MODE_HTML_CLASS} #${CARD_ID} .nellis-compare__image-wrap {
-      background: rgba(23, 23, 23, 0.92);
+      background: #ffffff;
+      border: 0;
     }
 
     html.${DARK_MODE_HTML_CLASS} #${CARD_ID} .nellis-compare__image {
-      background: #141414;
+      background: #ffffff;
     }
 
     html.${DARK_MODE_HTML_CLASS} .nellis-export-button {
