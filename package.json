@@ -19,7 +19,7 @@
   "license": "ISC",
   "packageManager": "pnpm@10.32.1",
   "devDependencies": {
-    "esbuild": "^0.19.0",
+    "esbuild": "^0.25.0",
     "chokidar-cli": "^3.0.0"
   }
 }
