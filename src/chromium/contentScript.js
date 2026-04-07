@@ -67,7 +67,7 @@ function installRouteListeners() {
     if (
       (isPurchasesPage() && !document.getElementById(PURCHASES_EXPORT_ID)) ||
       (isNellisItemPage() && !document.getElementById(CARD_ID)) ||
-      hasUnenhancedTooltipTargets()
+      hasTooltipRefreshTargets()
     ) {
       scheduleRender();
     }
@@ -76,6 +76,7 @@ function installRouteListeners() {
   observer.observe(document.documentElement, {
     childList: true,
     subtree: true,
+    characterData: true,
   });
 
   window.setInterval(() => {
@@ -95,10 +96,6 @@ function installRouteListeners() {
     if (isNellisItemPage() && !document.getElementById(CARD_ID)) {
       scheduleRender();
       return;
-    }
-
-    if (hasUnenhancedTooltipTargets()) {
-      scheduleRender();
     }
   }, ROUTE_WATCH_INTERVAL_MS);
 }
@@ -381,6 +378,7 @@ function attachPricePremiumHint() {
     activeTargets.add(target.container);
     target.container.classList.add(PREMIUM_HINT_CLASS);
     target.container.setAttribute('data-premium-tooltip', `Actual total: ${totalWithPremium}`);
+    target.container.dataset.premiumSourceAmount = amount.toFixed(2);
   }
 
   removeStaleTooltipTargets(PREMIUM_HINT_CLASS, 'data-premium-tooltip', activeTargets);
@@ -411,6 +409,9 @@ function removePricePremiumHints() {
   for (const node of document.querySelectorAll(`.${PREMIUM_HINT_CLASS}`)) {
     node.classList.remove(PREMIUM_HINT_CLASS);
     node.removeAttribute('data-premium-tooltip');
+    if (node instanceof HTMLElement) {
+      delete node.dataset.premiumSourceAmount;
+    }
   }
 }
 
@@ -510,13 +511,24 @@ function extractCloseTimeTooltipFromHtml(html) {
   }).format(closeTime);
 }
 
-function hasUnenhancedTooltipTargets() {
+function hasTooltipRefreshTargets() {
   if (!hasNellisPriceCards()) {
     return false;
   }
 
   return (
-    findNellisPriceTargets().some((target) => !target.container.classList.contains(PREMIUM_HINT_CLASS)) ||
+    findNellisPriceTargets().some((target) => {
+      if (!target.container.classList.contains(PREMIUM_HINT_CLASS)) {
+        return true;
+      }
+
+      const amount = parseCurrencyAmount(target.priceNode?.textContent);
+      if (amount === null || !(target.container instanceof HTMLElement)) {
+        return false;
+      }
+
+      return target.container.dataset.premiumSourceAmount !== amount.toFixed(2);
+    }) ||
     findNellisTimeTargets().some((target) => !target.container.classList.contains(TIME_HINT_CLASS))
   );
 }
