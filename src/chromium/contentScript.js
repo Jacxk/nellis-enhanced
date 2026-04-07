@@ -22,6 +22,7 @@ const DARK_MODE_TOGGLE_CLASS = 'nellis-dark-mode-toggle';
 const DARK_MODE_TOGGLE_ID = 'nellis-dark-mode-toggle';
 const DARK_MODE_HTML_CLASS = 'nellis-dark-mode';
 const DARK_MODE_STORAGE_KEY = 'nellisAuctionDarkMode';
+const BID_TOTAL_HINT_CLASS = 'nellis-bid-total-hint';
 const DARK_MODE_ICON_MOON =
   '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" width="17" height="17" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" /></svg>';
 const DARK_MODE_ICON_SUN =
@@ -78,7 +79,8 @@ function installRouteListeners() {
       (isPurchasesPage() && !document.getElementById(PURCHASES_EXPORT_ID)) ||
       (isNellisItemPage() && !document.getElementById(CARD_ID)) ||
       (isNellisAuctionSite() && needsDarkModeToggleRender()) ||
-      hasTooltipRefreshTargets()
+      hasTooltipRefreshTargets() ||
+      hasBidTotalHintRefreshTargets()
     ) {
       scheduleRender();
     }
@@ -111,6 +113,11 @@ function installRouteListeners() {
 
     if (isNellisAuctionSite() && needsDarkModeToggleRender()) {
       scheduleRender();
+      return;
+    }
+
+    if (hasBidTotalHintRefreshTargets()) {
+      scheduleRender();
     }
   }, ROUTE_WATCH_INTERVAL_MS);
 }
@@ -126,6 +133,7 @@ async function renderPageFeatures() {
   renderPurchasesExportButton(routeKey);
   renderDarkModeToggleButtons();
   attachPricePremiumHint();
+  attachBidTotalPremiumHint();
   attachTimeEndHint();
 
   if (!isNellisItemPage()) {
@@ -400,6 +408,89 @@ function attachPricePremiumHint() {
   removeStaleTooltipTargets(PREMIUM_HINT_CLASS, 'data-premium-tooltip', activeTargets);
 }
 
+function attachBidTotalPremiumHint(root = document) {
+  const forms = root.querySelectorAll('form[data-ax="item-card-bid-form"]');
+
+  for (const form of forms) {
+    if (!(form instanceof HTMLFormElement)) {
+      continue;
+    }
+
+    const input = form.querySelector('input[name="wsprice"][type="number"]');
+    if (!(input instanceof HTMLInputElement)) {
+      continue;
+    }
+
+    const hint = ensureBidTotalHint(form, input);
+    updateBidTotalHint(hint, input);
+
+    if (input.dataset.nellisBidTotalHintBound !== 'true') {
+      const handler = () => updateBidTotalHint(hint, input);
+      input.addEventListener('input', handler);
+      input.addEventListener('change', handler);
+      input.dataset.nellisBidTotalHintBound = 'true';
+    }
+  }
+}
+
+function ensureBidTotalHint(form, input) {
+  const existing = form.querySelector(
+    `.${BID_TOTAL_HINT_CLASS}[data-bid-input-id="${cssEscape(input.id)}"]`
+  );
+  if (existing instanceof HTMLElement) {
+    return existing;
+  }
+
+  const hint = document.createElement('div');
+  hint.className = BID_TOTAL_HINT_CLASS;
+  hint.setAttribute('role', 'note');
+  hint.setAttribute('aria-live', 'polite');
+  hint.dataset.bidInputId = input.id;
+
+  const label = form.querySelector(`label[for="${cssEscape(input.id)}"]`);
+  if (label) {
+    label.appendChild(hint);
+  } else {
+    form.appendChild(hint);
+  }
+
+  return hint;
+}
+
+function updateBidTotalHint(hint, input) {
+  if (!(hint instanceof HTMLElement)) {
+    return;
+  }
+
+  const rawValue = input.value;
+  const sourceText = rawValue === '' ? input.placeholder : rawValue;
+  const bidAmount = sourceText === '' ? NaN : Number(sourceText);
+
+  if (!Number.isFinite(bidAmount) || bidAmount < 0) {
+    hint.textContent = 'Total: —';
+    hint.hidden = false;
+    return;
+  }
+
+  const total = bidAmount * (1 + BUYER_PREMIUM_RATE);
+  const premium = total - bidAmount;
+
+  hint.hidden = false;
+  hint.textContent = `Total: ${formatCurrency(total)} (+${formatCurrency(premium)} fees)`;
+}
+
+function cssEscape(value) {
+  if (typeof value !== 'string' || !value) {
+    return '';
+  }
+
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+    return CSS.escape(value);
+  }
+
+  return value.replace(/["\\]/g, '\\$&');
+}
+
 function attachTimeEndHint() {
   const targets = findNellisTimeTargets();
   const activeTargets = new Set();
@@ -547,6 +638,37 @@ function hasTooltipRefreshTargets() {
     }) ||
     findNellisTimeTargets().some((target) => !target.container.classList.contains(TIME_HINT_CLASS))
   );
+}
+
+function hasBidTotalHintRefreshTargets(root = document) {
+  const forms = root.querySelectorAll('form[data-ax="item-card-bid-form"]');
+  if (!forms.length) {
+    return false;
+  }
+
+  for (const form of forms) {
+    const input = form.querySelector('input[name="wsprice"][type="number"]');
+    if (!(input instanceof HTMLInputElement)) {
+      continue;
+    }
+
+    if (input.dataset.nellisBidTotalHintBound !== 'true') {
+      return true;
+    }
+
+    if (!input.id) {
+      continue;
+    }
+
+    const hint = form.querySelector(
+      `.${BID_TOTAL_HINT_CLASS}[data-bid-input-id="${cssEscape(input.id)}"]`
+    );
+    if (!(hint instanceof HTMLElement)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function removeStaleTooltipTargets(className, attributeName, activeTargets) {
@@ -1182,6 +1304,19 @@ function injectStyles() {
     .nellis-export-button:disabled {
       cursor: wait;
       opacity: 0.7;
+    }
+
+    .${BID_TOTAL_HINT_CLASS} {
+      padding: 6px 10px;
+      font-size: 12px;
+      line-height: 1.25;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      color: rgba(17, 24, 39, 0.72);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .${BID_TOTAL_HINT_CLASS} {
+      color: rgba(229, 229, 229, 0.78);
     }
 
     #${DARK_MODE_TOGGLE_ID} {
