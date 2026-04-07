@@ -29,7 +29,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function fetchPurchasesPage({ page, size }) {
-  const endpointUrl = new URL('https://www.nellisauction.com/dashboard/purchases');
+  const endpointUrl = new URL('https://nellisauction.com/dashboard/purchases');
   endpointUrl.searchParams.set('_data', 'routes/dashboard.purchases._index');
   endpointUrl.searchParams.set('page', String(page));
   endpointUrl.searchParams.set('size', String(size));
