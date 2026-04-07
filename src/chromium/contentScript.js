@@ -23,9 +23,14 @@ const DARK_MODE_TOGGLE_CLASS = 'nellis-dark-mode-toggle';
 const DARK_MODE_TOGGLE_ID = 'nellis-dark-mode-toggle';
 const DARK_MODE_HTML_CLASS = 'nellis-dark-mode';
 const DARK_MODE_STORAGE_KEY = 'nellisAuctionDarkMode';
+const NOTIFICATIONS_SECTION_CLASS = 'nellis-notifications-section';
+const NOTIFICATIONS_SECTION_ID = 'nellis-notifications-section';
 const NOTIFICATIONS_TOGGLE_CLASS = 'nellis-notifications-toggle';
 const NOTIFICATIONS_TOGGLE_ID = 'nellis-notifications-toggle';
 const NOTIFICATIONS_STORAGE_KEY = 'nellisAuctionNotificationsEnabled';
+const OUTBID_TOGGLE_CLASS = 'nellis-outbid-notifications-toggle';
+const OUTBID_TOGGLE_ID = 'nellis-outbid-notifications-toggle';
+const OUTBID_STORAGE_KEY = 'nellisAuctionOutbidNotificationsEnabled';
 const BID_TOTAL_HINT_CLASS = 'nellis-bid-total-hint';
 const DARK_MODE_ICON_MOON =
   '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" width="17" height="17" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" /></svg>';
@@ -844,6 +849,30 @@ function writeNotificationsEnabled(enabled) {
   }
 }
 
+function readOutbidNotificationsEnabled() {
+  try {
+    return localStorage.getItem(OUTBID_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeOutbidNotificationsEnabled(enabled) {
+  try {
+    localStorage.setItem(OUTBID_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.set({ [OUTBID_STORAGE_KEY]: Boolean(enabled) });
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 function syncNotificationsToggleButton() {
   const btn = document.getElementById(NOTIFICATIONS_TOGGLE_ID);
   if (!(btn instanceof HTMLElement)) {
@@ -858,12 +887,13 @@ function syncNotificationsToggleButton() {
   btn.title = label;
   const permissionLevel = btn.dataset.permissionLevel || 'unknown';
   const isBlocked = permissionLevel === 'denied';
+  const stateText = isBlocked ? 'Blocked' : enabled ? 'On' : 'Off';
   btn.innerHTML = `
-    <span class="nellis-notifications-toggle__icon" aria-hidden="true">
-      ${enabled ? NOTIFICATIONS_ICON_BELL : NOTIFICATIONS_ICON_BELL_OFF}
-    </span>
-    <span class="nellis-notifications-toggle__label">3-min alerts</span>
-    <span class="nellis-notifications-toggle__state">${isBlocked ? 'Blocked' : enabled ? 'On' : 'Off'}</span>
+    <span aria-hidden="true"></span>
+    <div class="col-start-2 flex items-center justify-between gap-2 w-full">
+      <p class="text-neutral-800">3-min alerts</p>
+      <span class="text-body-sm font-semibold ${stateText === 'On' ? 'text-secondary' : stateText === 'Blocked' ? 'text-burgundy-800' : 'text-neutral-800'}">${stateText}</span>
+    </div>
   `;
 }
 
@@ -873,6 +903,7 @@ function handleNotificationsToggle() {
   sendRuntimeMessage({
     type: 'SET_AUCTION_NOTIFICATIONS_ENABLED',
     enabled: next,
+    outbidEnabled: readOutbidNotificationsEnabled(),
   }).catch(() => {
     /* ignore */
   });
@@ -963,50 +994,134 @@ function renderDarkModeToggleButtons() {
   syncDarkModeToggleButtons();
 }
 
+function syncOutbidToggleButton() {
+  const btn = document.getElementById(OUTBID_TOGGLE_ID);
+  if (!(btn instanceof HTMLElement)) {
+    return;
+  }
+
+  const enabled = readOutbidNotificationsEnabled();
+  const label = enabled ? 'Disable outbid notifications' : 'Enable outbid notifications';
+
+  btn.setAttribute('aria-pressed', String(enabled));
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+  const stateText = enabled ? 'On' : 'Off';
+  btn.innerHTML = `
+    <span aria-hidden="true"></span>
+    <div class="col-start-2 flex items-center justify-between gap-2 w-full">
+      <p class="text-neutral-800">Outbid alerts</p>
+      <span class="text-body-sm font-semibold ${stateText === 'On' ? 'text-secondary' : 'text-neutral-800'}">${stateText}</span>
+    </div>
+  `;
+}
+
+function handleOutbidToggle() {
+  const next = !readOutbidNotificationsEnabled();
+  writeOutbidNotificationsEnabled(next);
+  sendRuntimeMessage({
+    type: 'SET_AUCTION_NOTIFICATIONS_ENABLED',
+    enabled: readNotificationsEnabled(),
+    outbidEnabled: next,
+  }).catch(() => {
+    /* ignore */
+  });
+  syncOutbidToggleButton();
+}
+
+function handleOutbidToggleKeydown(event) {
+  if (!(event instanceof KeyboardEvent)) {
+    return;
+  }
+
+  if (event.key !== 'Enter' && event.key !== ' ') {
+    return;
+  }
+
+  event.preventDefault();
+  handleOutbidToggle();
+}
+
 function renderNotificationsToggleButtons() {
-  for (const el of document.querySelectorAll(`.${NOTIFICATIONS_TOGGLE_CLASS}`)) {
-    if (el.id !== NOTIFICATIONS_TOGGLE_ID) {
+  for (const el of document.querySelectorAll(
+    `.${NOTIFICATIONS_SECTION_CLASS}, .${NOTIFICATIONS_TOGGLE_CLASS}, .${OUTBID_TOGGLE_CLASS}`
+  )) {
+    if (
+      el.id !== NOTIFICATIONS_SECTION_ID &&
+      el.id !== NOTIFICATIONS_TOGGLE_ID &&
+      el.id !== OUTBID_TOGGLE_ID
+    ) {
       el.remove();
     }
   }
 
   if (!isNellisAuctionSite()) {
-    const existing = document.getElementById(NOTIFICATIONS_TOGGLE_ID);
-    if (existing) {
-      existing.remove();
-    }
+    document.getElementById(NOTIFICATIONS_SECTION_ID)?.remove();
+    document.getElementById(NOTIFICATIONS_TOGGLE_ID)?.remove();
+    document.getElementById(OUTBID_TOGGLE_ID)?.remove();
     return;
   }
 
   const sidebar = findDashboardAuctionsSidebar();
   if (!sidebar) {
-    const existing = document.getElementById(NOTIFICATIONS_TOGGLE_ID);
-    if (existing) {
-      existing.remove();
-    }
+    document.getElementById(NOTIFICATIONS_SECTION_ID)?.remove();
+    document.getElementById(NOTIFICATIONS_TOGGLE_ID)?.remove();
+    document.getElementById(OUTBID_TOGGLE_ID)?.remove();
     return;
   }
 
-  let button = document.getElementById(NOTIFICATIONS_TOGGLE_ID);
-  if (!button) {
-    button = document.createElement('div');
-    button.id = NOTIFICATIONS_TOGGLE_ID;
-    button.className = NOTIFICATIONS_TOGGLE_CLASS;
-    button.setAttribute('role', 'button');
-    button.setAttribute('tabindex', '0');
-    button.addEventListener('click', handleNotificationsToggle);
-    button.addEventListener('keydown', handleNotificationsToggleKeydown);
-  }
-
   const insertionPoint = findDashboardSidebarInsertionPoint(sidebar);
-  if (insertionPoint && button.parentElement !== insertionPoint) {
-    insertionPoint.appendChild(button);
-  } else if (!button.parentElement) {
-    sidebar.appendChild(button);
+  if (!insertionPoint) {
+    return;
   }
 
-  void syncNotificationsPermissionState(button);
+  let header = document.getElementById(NOTIFICATIONS_SECTION_ID);
+  if (!header) {
+    header = document.createElement('div');
+    header.id = NOTIFICATIONS_SECTION_ID;
+    header.className = `${NOTIFICATIONS_SECTION_CLASS} w-full grid grid-cols-[minmax(0,22px)_minmax(0,_1fr)] items-center gap-2 px-4 py-2 focus-visible:outline-secondary`;
+    header.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512" height="22" width="22" class="fill-neutral-800" aria-hidden="true">
+        <path d="M208 16c0-8.8 7.2-16 16-16s16 7.2 16 16l0 16.8c80.9 8 144 76.2 144 159.2l0 29.1c0 43.7 17.4 85.6 48.3 116.6l2.8 2.8c8.3 8.3 13 19.6 13 31.3c0 24.5-19.8 44.3-44.3 44.3L44.3 416C19.8 416 0 396.2 0 371.7c0-11.7 4.7-23 13-31.3l2.8-2.8C46.6 306.7 64 264.8 64 221.1L64 192c0-83 63.1-151.2 144-159.2L208 16zm16 48C153.3 64 96 121.3 96 192l0 29.1c0 52.2-20.7 102.3-57.7 139.2L35.6 363c-2.3 2.3-3.6 5.4-3.6 8.7c0 6.8 5.5 12.3 12.3 12.3l359.4 0c6.8 0 12.3-5.5 12.3-12.3c0-3.3-1.3-6.4-3.6-8.7l-2.8-2.8c-36.9-36.9-57.7-87-57.7-139.2l0-29.1c0-70.7-57.3-128-128-128zM193.8 458.7c4.4 12.4 16.3 21.3 30.2 21.3s25.8-8.9 30.2-21.3c2.9-8.3 12.1-12.7 20.4-9.8s12.7 12.1 9.8 20.4C275.6 494.2 251.9 512 224 512s-51.6-17.8-60.4-42.7c-2.9-8.3 1.4-17.5 9.8-20.4s17.5 1.4 20.4 9.8z"></path>
+      </svg>
+      <p class="text-neutral-800 text-title-xs font-semibold">Notifications</p>
+    `;
+    insertionPoint.appendChild(header);
+  } else if (header.parentElement !== insertionPoint) {
+    insertionPoint.appendChild(header);
+  }
+
+  let threeMinToggle = document.getElementById(NOTIFICATIONS_TOGGLE_ID);
+  if (!threeMinToggle) {
+    threeMinToggle = document.createElement('div');
+    threeMinToggle.id = NOTIFICATIONS_TOGGLE_ID;
+    threeMinToggle.className = `${NOTIFICATIONS_TOGGLE_CLASS} w-full grid grid-cols-[minmax(0,22px)_minmax(0,_1fr)] items-center gap-2 px-4 py-2 focus-visible:outline-secondary text-neutral-800 hover:text-secondary text-neutral-800 hover:bg-neutral-100`;
+    threeMinToggle.setAttribute('role', 'button');
+    threeMinToggle.setAttribute('tabindex', '0');
+    threeMinToggle.addEventListener('click', handleNotificationsToggle);
+    threeMinToggle.addEventListener('keydown', handleNotificationsToggleKeydown);
+    insertionPoint.appendChild(threeMinToggle);
+  } else if (threeMinToggle.parentElement !== insertionPoint) {
+    insertionPoint.appendChild(threeMinToggle);
+  }
+
+  let outbidToggle = document.getElementById(OUTBID_TOGGLE_ID);
+  if (!outbidToggle) {
+    outbidToggle = document.createElement('div');
+    outbidToggle.id = OUTBID_TOGGLE_ID;
+    outbidToggle.className = `${OUTBID_TOGGLE_CLASS} w-full grid grid-cols-[minmax(0,22px)_minmax(0,_1fr)] items-center gap-2 px-4 py-2 focus-visible:outline-secondary text-neutral-800 hover:text-secondary text-neutral-800 hover:bg-neutral-100`;
+    outbidToggle.setAttribute('role', 'button');
+    outbidToggle.setAttribute('tabindex', '0');
+    outbidToggle.addEventListener('click', handleOutbidToggle);
+    outbidToggle.addEventListener('keydown', handleOutbidToggleKeydown);
+    insertionPoint.appendChild(outbidToggle);
+  } else if (outbidToggle.parentElement !== insertionPoint) {
+    insertionPoint.appendChild(outbidToggle);
+  }
+
+  void syncNotificationsPermissionState(threeMinToggle);
   syncNotificationsToggleButton();
+  syncOutbidToggleButton();
 }
 
 async function syncNotificationsPermissionState(button) {
@@ -2344,65 +2459,6 @@ function injectStyles() {
       color: #e5e5e5;
       border-color: rgba(115, 115, 115, 0.45);
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-    }
-
-    #${NOTIFICATIONS_TOGGLE_ID} {
-      width: 100%;
-      display: grid;
-      grid-template-columns: minmax(0, 22px) minmax(0, 1fr) auto;
-      align-items: center;
-      gap: 8px;
-      padding: 8px 16px;
-      border: 0;
-      background: transparent;
-      color: inherit;
-      cursor: pointer;
-      text-align: left;
-      border-radius: 8px;
-    }
-
-    #${NOTIFICATIONS_TOGGLE_ID}:hover {
-      background-color: rgb(245, 245, 245);
-    }
-
-    #${NOTIFICATIONS_TOGGLE_ID}:focus-visible {
-      outline: 1px solid rgba(148, 163, 184, 0.85);
-      outline-offset: 1px;
-    }
-
-    #${NOTIFICATIONS_TOGGLE_ID} .nellis-notifications-toggle__icon svg {
-      display: block;
-      fill: currentColor;
-    }
-
-    #${NOTIFICATIONS_TOGGLE_ID} .nellis-notifications-toggle__label {
-      font-size: 14px;
-      font-weight: 600;
-      color: rgb(38, 38, 38);
-    }
-
-    #${NOTIFICATIONS_TOGGLE_ID} .nellis-notifications-toggle__state {
-      font-size: 12px;
-      font-weight: 700;
-      padding: 2px 10px;
-      border-radius: 9999px;
-      border: 1px solid rgba(15, 23, 42, 0.12);
-      background: rgba(15, 23, 42, 0.04);
-      color: rgb(64, 64, 64);
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #${NOTIFICATIONS_TOGGLE_ID}:hover {
-      background-color: rgba(255, 255, 255, 0.06);
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #${NOTIFICATIONS_TOGGLE_ID} .nellis-notifications-toggle__label {
-      color: #e5e5e5;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #${NOTIFICATIONS_TOGGLE_ID} .nellis-notifications-toggle__state {
-      border-color: rgba(203, 213, 225, 0.28);
-      background: rgba(255, 255, 255, 0.08);
-      color: #e5e5e5;
     }
 
     @media (max-width: 720px) {

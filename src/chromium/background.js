@@ -2,9 +2,11 @@ import { fetchAmazonHtml, fetchAmazonSearchHtml } from '../shared/amazonSource.j
 
 const notificationUrlById = new Map();
 const NOTIFICATIONS_STORAGE_KEY = 'nellisAuctionNotificationsEnabled';
+const OUTBID_STORAGE_KEY = 'nellisAuctionOutbidNotificationsEnabled';
 const NOTIFICATIONS_ALARM_NAME = 'nellis-auction-notifications';
 const THREE_MINUTES_MS = 3 * 60 * 1000;
 const ACTIVE_AUCTIONS_URL = 'https://nellisauction.com/dashboard/auctions/active';
+const OUTBID_AUCTIONS_URL = 'https://nellisauction.com/dashboard/auctions/outbid';
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (
@@ -32,7 +34,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             : message?.type === 'GET_NOTIFICATION_PERMISSION_LEVEL'
               ? await getNotificationPermissionLevel()
               : message?.type === 'SET_AUCTION_NOTIFICATIONS_ENABLED'
-                ? await setAuctionNotificationsEnabled(Boolean(message?.enabled))
+                ? await setAuctionNotificationsEnabled({
+                    enabled: Boolean(message?.enabled),
+                    outbidEnabled: Boolean(message?.outbidEnabled),
+                  })
             : await fetchAmazonSearchHtml(typeof message.title === 'string' ? message.title : '');
 
     sendResponse(payload);
@@ -185,9 +190,12 @@ async function ensureAuctionNotificationsAlarm() {
   alarms.create(NOTIFICATIONS_ALARM_NAME, { periodInMinutes: 1 });
 }
 
-async function setAuctionNotificationsEnabled(enabled) {
+async function setAuctionNotificationsEnabled({ enabled, outbidEnabled }) {
   try {
-    await chrome.storage.local.set({ [NOTIFICATIONS_STORAGE_KEY]: Boolean(enabled) });
+    await chrome.storage.local.set({
+      [NOTIFICATIONS_STORAGE_KEY]: Boolean(enabled),
+      [OUTBID_STORAGE_KEY]: Boolean(outbidEnabled),
+    });
   } catch (error) {
     return { ok: false, error: String(error) };
   }
@@ -199,7 +207,7 @@ async function setAuctionNotificationsEnabled(enabled) {
   }
 
   // Kick an immediate check when enabling.
-  if (enabled) {
+  if (enabled || outbidEnabled) {
     runAuctionNotificationsCheck().catch(() => {});
   }
 
@@ -210,6 +218,15 @@ async function getAuctionNotificationsEnabled() {
   try {
     const result = await chrome.storage.local.get([NOTIFICATIONS_STORAGE_KEY]);
     return Boolean(result?.[NOTIFICATIONS_STORAGE_KEY]);
+  } catch {
+    return false;
+  }
+}
+
+async function getOutbidNotificationsEnabled() {
+  try {
+    const result = await chrome.storage.local.get([OUTBID_STORAGE_KEY]);
+    return Boolean(result?.[OUTBID_STORAGE_KEY]);
   } catch {
     return false;
   }
@@ -239,7 +256,8 @@ async function persistNotifiedKeysSet(set) {
 
 async function runAuctionNotificationsCheck() {
   const enabled = await getAuctionNotificationsEnabled();
-  if (!enabled) {
+  const outbidEnabled = await getOutbidNotificationsEnabled();
+  if (!enabled && !outbidEnabled) {
     return;
   }
 
@@ -249,43 +267,75 @@ async function runAuctionNotificationsCheck() {
   }
 
   const notifiedKeys = await getNotifiedKeysSet();
-  const itemUrls = await fetchActiveAuctionItemUrls();
 
-  // Limit work per tick to keep the service worker light.
-  const urlsToCheck = itemUrls.slice(0, 25);
   const now = Date.now();
 
-  for (const itemUrl of urlsToCheck) {
-    const closeTimeIso = await fetchItemCloseTimeIso(itemUrl);
-    if (!closeTimeIso) {
-      continue;
+  if (enabled) {
+    const itemUrls = await fetchActiveAuctionItemUrls();
+
+    // Limit work per tick to keep the service worker light.
+    const urlsToCheck = itemUrls.slice(0, 25);
+
+    for (const itemUrl of urlsToCheck) {
+      const closeTimeIso = await fetchItemCloseTimeIso(itemUrl);
+      if (!closeTimeIso) {
+        continue;
+      }
+
+      const closeTime = new Date(closeTimeIso).getTime();
+      if (!Number.isFinite(closeTime)) {
+        continue;
+      }
+
+      const remainingMs = closeTime - now;
+      if (remainingMs <= 0 || remainingMs > THREE_MINUTES_MS) {
+        continue;
+      }
+
+      const key = `3min|${itemUrl}|${closeTimeIso}`;
+      if (notifiedKeys.has(key)) {
+        continue;
+      }
+
+      notifiedKeys.add(key);
+      await persistNotifiedKeysSet(notifiedKeys);
+
+      await postBrowserNotification({
+        type: 'POST_NOTIFICATION',
+        notificationId: buildNotificationId(itemUrl, closeTimeIso),
+        title: 'Nellis auction ending soon',
+        message: '3 minutes left',
+        url: itemUrl,
+      });
     }
+  }
 
-    const closeTime = new Date(closeTimeIso).getTime();
-    if (!Number.isFinite(closeTime)) {
-      continue;
+  if (outbidEnabled) {
+    const outbidItems = await fetchOutbidItems();
+    const itemsToCheck = outbidItems.slice(0, 25);
+
+    for (const item of itemsToCheck) {
+      const itemUrl = item?.url;
+      if (!itemUrl) {
+        continue;
+      }
+
+      const key = `outbid|${itemUrl}`;
+      if (notifiedKeys.has(key)) {
+        continue;
+      }
+
+      notifiedKeys.add(key);
+      await persistNotifiedKeysSet(notifiedKeys);
+
+      await postBrowserNotification({
+        type: 'POST_NOTIFICATION',
+        notificationId: `nellis-outbid-${itemUrl.replace(/[^a-z0-9]/gi, '_').slice(-120)}`,
+        title: 'You were outbid',
+        message: item.title ? item.title : 'An item in your auctions was outbid.',
+        url: itemUrl,
+      });
     }
-
-    const remainingMs = closeTime - now;
-    if (remainingMs <= 0 || remainingMs > THREE_MINUTES_MS) {
-      continue;
-    }
-
-    const key = `${itemUrl}|${closeTimeIso}`;
-    if (notifiedKeys.has(key)) {
-      continue;
-    }
-
-    notifiedKeys.add(key);
-    await persistNotifiedKeysSet(notifiedKeys);
-
-    await postBrowserNotification({
-      type: 'POST_NOTIFICATION',
-      notificationId: buildNotificationId(itemUrl, closeTimeIso),
-      title: 'Nellis auction ending soon',
-      message: '3 minutes left',
-      url: itemUrl,
-    });
   }
 }
 
@@ -347,4 +397,45 @@ async function fetchItemCloseTimeIso(itemUrl) {
 function extractCloseTimeIsoFromHtml(html) {
   const match = String(html || '').match(/"closeTime":\{"__type":"Date","value":"([^"]+)"\}/);
   return match?.[1] || '';
+}
+
+async function fetchOutbidItems() {
+  const response = await fetch(OUTBID_AUCTIONS_URL, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      accept: 'text/html,application/xhtml+xml',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Outbid auctions request failed with status ${response.status}`);
+  }
+
+  const html = await response.text();
+  const items = [];
+  const seen = new Set();
+
+  for (const match of html.matchAll(/href="(\/p\/[^"/]+\/\d+[^"]*)"/g)) {
+    const href = match?.[1];
+    if (!href) continue;
+    const url = new URL(href, 'https://nellisauction.com').toString();
+    if (seen.has(url)) continue;
+    seen.add(url);
+    items.push({ url, title: '' });
+  }
+
+  // Opportunistic title parse: grab the first plausible text near the link.
+  for (const item of items) {
+    const escapedHref = item.url.replace('https://nellisauction.com', '');
+    const idx = html.indexOf(`href="${escapedHref}"`);
+    if (idx === -1) continue;
+    const windowText = html.slice(idx, idx + 600);
+    const titleMatch = windowText.match(/data-ax="item-card-title-link"[^>]*>([^<]{3,120})</i);
+    if (titleMatch?.[1]) {
+      item.title = titleMatch[1].trim();
+    }
+  }
+
+  return items;
 }
