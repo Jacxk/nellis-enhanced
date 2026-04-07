@@ -3,6 +3,7 @@ import {
   findNellisPriceTargets,
   findNellisTimeTargets,
   findItemDetailsAnchor,
+  findTitleDescriptionAnchor,
   hasNellisPriceCards,
   isNellisAuctionSite,
   isNellisItemPage,
@@ -156,9 +157,9 @@ async function renderComparisonCard(routeKey) {
   }
 
   const nellisItem = extractNellisItem();
-  const itemDetailsAnchor = findItemDetailsAnchor();
+  const primaryAnchor = findTitleDescriptionAnchor() || findItemDetailsAnchor();
 
-  if (!nellisItem?.title || !itemDetailsAnchor) {
+  if (!nellisItem?.title || !primaryAnchor) {
     if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
       pendingRouteAttempts += 1;
       window.setTimeout(scheduleRender, RENDER_RETRY_MS);
@@ -187,7 +188,7 @@ async function renderComparisonCard(routeKey) {
   activeRouteKey = routeKey;
   lastRenderedTitle = nellisItem.title;
 
-  const card = ensureCard(itemDetailsAnchor);
+  const card = ensureCard(primaryAnchor);
   updateCardState(card, {
     state: 'loading',
     nellisItem,
@@ -259,7 +260,6 @@ function ensureCard(itemDetailsAnchor) {
     card.id = CARD_ID;
     card.innerHTML = `
       <div class="nellis-compare__header">
-        <div class="nellis-compare__badge" aria-hidden="true">a</div>
         <div>
           <h3 class="nellis-compare__title">Amazon</h3>
         </div>
@@ -829,12 +829,12 @@ function refreshComparisonCardStyling() {
     return;
   }
 
-  const itemDetailsAnchor = findItemDetailsAnchor();
-  if (!itemDetailsAnchor) {
+  const anchor = findTitleDescriptionAnchor() || findItemDetailsAnchor();
+  if (!anchor) {
     return;
   }
 
-  applyNativeCardStyling(card, itemDetailsAnchor);
+  applyNativeCardStyling(card, anchor);
 }
 
 function renderDarkModeToggleButtons() {
@@ -1107,18 +1107,6 @@ function injectStyles() {
       margin-bottom: 12px;
     }
 
-    #${CARD_ID} .nellis-compare__badge {
-      width: 28px;
-      height: 28px;
-      border-radius: 8px;
-      display: grid;
-      place-items: center;
-      font: 700 16px/1 Arial, sans-serif;
-      color: #111827;
-      background: linear-gradient(135deg, #ffe082 0%, #ffc94d 100%);
-      text-transform: lowercase;
-    }
-
     #${CARD_ID} .nellis-compare__title {
       margin: 0;
       font-size: 15px;
@@ -1190,17 +1178,20 @@ function injectStyles() {
       justify-content: center;
       min-height: 36px;
       padding: 0 14px;
-      border-radius: 999px;
-      border: 1px solid #f2c200;
-      background: var(--nellis-compare-button-bg, linear-gradient(180deg, #ffe7a3 0%, #ffd85c 100%));
-      color: #111827;
+      width: 100%;
+      border-radius: 10px;
+      border: 0;
+      background: linear-gradient(90deg, #c31432 0%, #93291e 100%);
+      color: #ffffff;
       text-decoration: none;
       font-size: 13px;
       font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
     }
 
     #${CARD_ID} .nellis-compare__button:hover {
-      filter: brightness(0.98);
+      filter: brightness(0.97);
     }
 
     .${PREMIUM_HINT_CLASS} {

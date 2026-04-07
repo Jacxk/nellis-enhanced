@@ -184,6 +184,79 @@ export function findItemDetailsAnchor(root = document) {
   );
 }
 
+export function findTitleDescriptionAnchor(root = document) {
+  // 1) Prefer a dedicated description/details card (more stable than the h1 header region).
+  const descriptionSelectorMatch = [
+    '[data-ax*="description"]',
+    '[data-testid*="description"]',
+    '[class*="description"]',
+    '[class*="Description"]',
+    '[class*="details"]',
+    '[class*="Details"]',
+  ]
+    .map((selector) => root.querySelector(selector))
+    .find(Boolean);
+
+  if (descriptionSelectorMatch) {
+    return (
+      descriptionSelectorMatch.closest('section') ||
+      descriptionSelectorMatch.closest('article') ||
+      descriptionSelectorMatch.closest('div') ||
+      descriptionSelectorMatch
+    );
+  }
+
+  // 2) Headings-based fallback: find a "Description" heading and use its container.
+  const headings = Array.from(root.querySelectorAll('h1, h2, h3, h4, [role="heading"]'));
+  const descriptionHeading = headings.find((node) => {
+    const text = node.textContent?.trim().toLowerCase() || '';
+    return text === 'description' || text.includes('item description') || text.includes('description');
+  });
+
+  if (descriptionHeading) {
+    return (
+      descriptionHeading.closest('section') ||
+      descriptionHeading.closest('article') ||
+      descriptionHeading.closest('div') ||
+      descriptionHeading.parentElement ||
+      descriptionHeading
+    );
+  }
+
+  const selectorMatch = [
+    '[data-ax*="product-page-title"]',
+    '[data-ax*="product-title"]',
+    '[data-testid*="product-title"]',
+    '[class*="product-title"]',
+    '[class*="ProductTitle"]',
+    '[class*="title-card"]',
+    '[class*="TitleCard"]',
+    '[class*="description-card"]',
+    '[class*="DescriptionCard"]',
+  ]
+    .map((selector) => root.querySelector(selector))
+    .find(Boolean);
+
+  if (selectorMatch) {
+    return selectorMatch.closest('section') || selectorMatch.closest('article') || selectorMatch;
+  }
+
+  const titleNode = root.querySelector('main h1, h1');
+  if (!titleNode) {
+    return null;
+  }
+
+  // Prefer a nearby "card-ish" container for the title/description.
+  const candidates = [
+    titleNode.closest('section'),
+    titleNode.closest('article'),
+    titleNode.closest('div'),
+    titleNode.parentElement,
+  ].filter(Boolean);
+
+  return candidates[0] || null;
+}
+
 function extractText(root, selectors) {
   for (const selector of selectors) {
     const node = root.querySelector(selector);
