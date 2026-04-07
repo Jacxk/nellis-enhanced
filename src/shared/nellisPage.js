@@ -210,3 +210,8 @@ function extractImage(root, selectors) {
 
   return '';
 }
+
+export function isNellisAuctionSite(locationObject = window.location) {
+  const host = locationObject.hostname || '';
+  return host === 'www.nellisauction.com' || host === 'nellisauction.com';
+}
