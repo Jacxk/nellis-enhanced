@@ -4,6 +4,7 @@ import {
   findNellisTimeTargets,
   findItemDetailsAnchor,
   hasNellisPriceCards,
+  isNellisAuctionSite,
   isNellisItemPage,
   isNellisOnlyItemTitle,
   parseCurrencyAmount,
@@ -17,6 +18,14 @@ const STYLE_ID = 'nellis-amazon-compare-style';
 const PREMIUM_HINT_CLASS = 'nellis-premium-hint';
 const TIME_HINT_CLASS = 'nellis-time-hint';
 const PURCHASES_EXPORT_ID = 'nellis-purchases-export';
+const DARK_MODE_TOGGLE_CLASS = 'nellis-dark-mode-toggle';
+const DARK_MODE_TOGGLE_ID = 'nellis-dark-mode-toggle';
+const DARK_MODE_HTML_CLASS = 'nellis-dark-mode';
+const DARK_MODE_STORAGE_KEY = 'nellisAuctionDarkMode';
+const DARK_MODE_ICON_MOON =
+  '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" width="17" height="17" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" /></svg>';
+const DARK_MODE_ICON_SUN =
+  '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" width="17" height="17" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>';
 const RENDER_DEBOUNCE_MS = 250;
 const MAX_RENDER_RETRIES = 20;
 const RENDER_RETRY_MS = 400;
@@ -40,6 +49,7 @@ init();
 
 function init() {
   injectStyles();
+  applyStoredDarkMode();
   installRouteListeners();
   scheduleRender();
 }
@@ -67,6 +77,7 @@ function installRouteListeners() {
     if (
       (isPurchasesPage() && !document.getElementById(PURCHASES_EXPORT_ID)) ||
       (isNellisItemPage() && !document.getElementById(CARD_ID)) ||
+      (isNellisAuctionSite() && needsDarkModeToggleRender()) ||
       hasTooltipRefreshTargets()
     ) {
       scheduleRender();
@@ -97,6 +108,10 @@ function installRouteListeners() {
       scheduleRender();
       return;
     }
+
+    if (isNellisAuctionSite() && needsDarkModeToggleRender()) {
+      scheduleRender();
+    }
   }, ROUTE_WATCH_INTERVAL_MS);
 }
 
@@ -109,6 +124,7 @@ async function renderPageFeatures() {
   const routeKey = `${window.location.pathname}${window.location.search}`;
   injectStyles();
   renderPurchasesExportButton(routeKey);
+  renderDarkModeToggleButtons();
   attachPricePremiumHint();
   attachTimeEndHint();
 
@@ -627,6 +643,87 @@ function removePurchasesExportButton() {
   }
 }
 
+function needsDarkModeToggleRender() {
+  return isNellisAuctionSite() && !document.getElementById(DARK_MODE_TOGGLE_ID);
+}
+
+function applyStoredDarkMode() {
+  try {
+    if (localStorage.getItem(DARK_MODE_STORAGE_KEY) === '1') {
+      document.documentElement.classList.add(DARK_MODE_HTML_CLASS);
+    } else {
+      document.documentElement.classList.remove(DARK_MODE_HTML_CLASS);
+    }
+  } catch {
+    document.documentElement.classList.remove(DARK_MODE_HTML_CLASS);
+  }
+}
+
+function syncDarkModeToggleButtons() {
+  const btn = document.getElementById(DARK_MODE_TOGGLE_ID);
+  if (!(btn instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const isDark = document.documentElement.classList.contains(DARK_MODE_HTML_CLASS);
+  const label = isDark ? 'Switch to light theme' : 'Switch to dark theme';
+
+  btn.setAttribute('aria-pressed', String(isDark));
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+  btn.innerHTML = isDark ? DARK_MODE_ICON_SUN : DARK_MODE_ICON_MOON;
+}
+
+function handleDarkModeToggle() {
+  const next = !document.documentElement.classList.contains(DARK_MODE_HTML_CLASS);
+
+  if (next) {
+    document.documentElement.classList.add(DARK_MODE_HTML_CLASS);
+    try {
+      localStorage.setItem(DARK_MODE_STORAGE_KEY, '1');
+    } catch {
+      /* ignore */
+    }
+  } else {
+    document.documentElement.classList.remove(DARK_MODE_HTML_CLASS);
+    try {
+      localStorage.setItem(DARK_MODE_STORAGE_KEY, '0');
+    } catch {
+      /* ignore */
+    }
+  }
+
+  syncDarkModeToggleButtons();
+}
+
+function renderDarkModeToggleButtons() {
+  for (const el of document.querySelectorAll(`.${DARK_MODE_TOGGLE_CLASS}`)) {
+    if (el.id !== DARK_MODE_TOGGLE_ID) {
+      el.remove();
+    }
+  }
+
+  if (!isNellisAuctionSite()) {
+    const existing = document.getElementById(DARK_MODE_TOGGLE_ID);
+    if (existing) {
+      existing.remove();
+    }
+    return;
+  }
+
+  let button = document.getElementById(DARK_MODE_TOGGLE_ID);
+  if (!button) {
+    button = document.createElement('button');
+    button.id = DARK_MODE_TOGGLE_ID;
+    button.type = 'button';
+    button.className = DARK_MODE_TOGGLE_CLASS;
+    button.addEventListener('click', handleDarkModeToggle);
+    document.body.appendChild(button);
+  }
+
+  syncDarkModeToggleButtons();
+}
+
 async function handlePurchasesExport(event) {
   const button = event.currentTarget;
   if (!(button instanceof HTMLButtonElement) || purchasesExportInFlight) {
@@ -1085,6 +1182,558 @@ function injectStyles() {
     .nellis-export-button:disabled {
       cursor: wait;
       opacity: 0.7;
+    }
+
+    #${DARK_MODE_TOGGLE_ID} {
+      box-sizing: border-box;
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      right: auto;
+      z-index: 2147483000;
+      width: 40px;
+      height: 40px;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border: 1px solid rgba(15, 23, 42, 0.14);
+      border-radius: 9999px;
+      background: #ffffff;
+      color: #334155;
+      cursor: pointer;
+      opacity: 1;
+      box-shadow: 0 4px 18px rgba(15, 23, 42, 0.14);
+      transition: background 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+    }
+
+    #${DARK_MODE_TOGGLE_ID} svg {
+      display: block;
+      flex-shrink: 0;
+      stroke: currentColor;
+    }
+
+    #${DARK_MODE_TOGGLE_ID}:hover {
+      background: #f8fafc;
+      color: #0f172a;
+      border-color: rgba(15, 23, 42, 0.2);
+      box-shadow: 0 6px 20px rgba(15, 23, 42, 0.18);
+    }
+
+    #${DARK_MODE_TOGGLE_ID}:focus-visible {
+      outline: 2px solid rgba(100, 116, 139, 0.55);
+      outline-offset: 2px;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${DARK_MODE_TOGGLE_ID} {
+      background: #262626;
+      color: #e2e8f0;
+      border-color: rgba(148, 163, 184, 0.35);
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${DARK_MODE_TOGGLE_ID}:hover {
+      background: #333333;
+      color: #f8fafc;
+      border-color: rgba(203, 213, 225, 0.45);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${DARK_MODE_TOGGLE_ID}:focus-visible {
+      outline-color: rgba(148, 163, 184, 0.65);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} {
+      color-scheme: dark;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} body {
+      background-color: #0a0a0a !important;
+      color: #e5e5e5 !important;
+    }
+
+    /*
+     * Neutral surfaces: use [class~="…"] for exact tokens only. Substring [class*="bg-neutral-100"]
+     * falsely matches hover:bg-neutral-100 (sidebar links looked always “selected”).
+     */
+    html.${DARK_MODE_HTML_CLASS} .bg-neutral-50,
+    html.${DARK_MODE_HTML_CLASS} .bg-neutral-100,
+    html.${DARK_MODE_HTML_CLASS} .bg-neutral-200,
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-neutral-50"],
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-neutral-100"],
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-neutral-200"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xxs:bg-neutral-50"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xxs:bg-neutral-100"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xxs:bg-neutral-200"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xs:bg-neutral-50"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xs:bg-neutral-100"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xs:bg-neutral-200"],
+    html.${DARK_MODE_HTML_CLASS} [class~="sm:bg-neutral-50"],
+    html.${DARK_MODE_HTML_CLASS} [class~="sm:bg-neutral-100"],
+    html.${DARK_MODE_HTML_CLASS} [class~="sm:bg-neutral-200"],
+    html.${DARK_MODE_HTML_CLASS} [class~="md:bg-neutral-50"],
+    html.${DARK_MODE_HTML_CLASS} [class~="md:bg-neutral-100"],
+    html.${DARK_MODE_HTML_CLASS} [class~="md:bg-neutral-200"],
+    html.${DARK_MODE_HTML_CLASS} [class~="lg:bg-neutral-50"],
+    html.${DARK_MODE_HTML_CLASS} [class~="lg:bg-neutral-100"],
+    html.${DARK_MODE_HTML_CLASS} [class~="lg:bg-neutral-200"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xl:bg-neutral-50"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xl:bg-neutral-100"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xl:bg-neutral-200"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xxl:bg-neutral-50"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xxl:bg-neutral-100"],
+    html.${DARK_MODE_HTML_CLASS} [class~="xxl:bg-neutral-200"],
+    html.${DARK_MODE_HTML_CLASS} [class~="2xl:bg-neutral-50"],
+    html.${DARK_MODE_HTML_CLASS} [class~="2xl:bg-neutral-100"],
+    html.${DARK_MODE_HTML_CLASS} [class~="2xl:bg-neutral-200"],
+    html.${DARK_MODE_HTML_CLASS} [class~="3xl:bg-neutral-50"],
+    html.${DARK_MODE_HTML_CLASS} [class~="3xl:bg-neutral-100"],
+    html.${DARK_MODE_HTML_CLASS} [class~="3xl:bg-neutral-200"] {
+      background-color: #262626 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-neutral-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-neutral-900"] {
+      background-color: #171717 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .bg-white,
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-white"]:not([class*="before:bg-white"]) {
+      background-color: #141414 !important;
+    }
+
+    /* Search / listing “Filters” sticky bar: no solid strip (bg-white + lg:bg-neutral-100) */
+    html.${DARK_MODE_HTML_CLASS} [class*="sticky"][class*="top-0"][class*="bg-white"][class*="lg:bg-neutral-100"][class*="z-50"][class*="my-2.5"] {
+      background-color: transparent !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-burgundy-50"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-burgundy-100"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-100"] {
+      background-color: #2a2a2a !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-secondary"] {
+      background-color: #262626 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="hover:bg-secondary-light"]:hover {
+      background-color: #333333 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-transition-background"] {
+      background-color: #0a0a0a !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="before:bg-white"]::before {
+      background-color: #141414 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="hover:bg-neutral-100"]:hover,
+    html.${DARK_MODE_HTML_CLASS} [class*="hover:bg-neutral-300"]:hover,
+    html.${DARK_MODE_HTML_CLASS} [class*="hover:bg-burgundy-100"]:hover,
+    html.${DARK_MODE_HTML_CLASS} [class*="focus-visible:bg-burgundy-100"]:focus-visible {
+      background-color: #333333 !important;
+    }
+
+    /* Dashboard sidebar: match parent strip; only aria-current row is highlighted */
+    html.${DARK_MODE_HTML_CLASS} [class~="flex-col"][class~="gap-3"][class~="bg-white"] > a[href] {
+      background-color: transparent !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class~="flex-col"][class~="gap-3"][class~="bg-white"] > a[href][aria-current] {
+      background-color: #262626 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class~="flex-col"][class~="gap-3"][class~="bg-white"] > a[href]:not([aria-current]):hover {
+      background-color: #2a2a2a !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class~="flex-col"][class~="gap-3"][class~="bg-white"] > a[href][aria-current]:hover {
+      background-color: #333333 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="hover:bg-[#"]:hover,
+    html.${DARK_MODE_HTML_CLASS} [class*="focus:bg-[#"]:focus {
+      background-color: rgba(255, 255, 255, 0.07) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .text-gray-900,
+    html.${DARK_MODE_HTML_CLASS} .text-gray-800,
+    html.${DARK_MODE_HTML_CLASS} [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="text-gray-800"] {
+      color: #fafafa !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .text-gray-700,
+    html.${DARK_MODE_HTML_CLASS} .text-gray-600,
+    html.${DARK_MODE_HTML_CLASS} [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [class*="text-gray-600"] {
+      color: #d4d4d4 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .text-gray-500,
+    html.${DARK_MODE_HTML_CLASS} [class*="text-gray-500"] {
+      color: #a3a3a3 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="text-neutral-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="text-neutral-900"] {
+      color: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="text-burgundy-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="text-secondary"] {
+      color: #d4d4d4 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="placeholder:text-gray-700"]::placeholder {
+      color: #737373 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .fill-gray-900,
+    html.${DARK_MODE_HTML_CLASS} .fill-gray-800,
+    html.${DARK_MODE_HTML_CLASS} [class*="fill-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="fill-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="fill-neutral-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="fill-neutral-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="fill-burgundy-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="fill-secondary"],
+    html.${DARK_MODE_HTML_CLASS} [class*="fill-black"] {
+      fill: #d4d4d4 !important;
+    }
+
+    /*
+     * Search filter column: many header SVGs have no fill class (default black → invisible on dark cards).
+     */
+    html.${DARK_MODE_HTML_CLASS} [data-ax^="search-refine"] svg:not([class*="fill-"]) path,
+    html.${DARK_MODE_HTML_CLASS} [data-ax^="search-refine"] form svg path,
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"][class*="shadow-md"] details svg:not([class*="fill-"]) path {
+      fill: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax^="search-refine"] [class*="fill-secondary"] {
+      fill: #f0f0f0 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax^="search-refine"] [class*="fill-starRating"] {
+      fill: #fbbf24 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax^="search-refine"] [class*="fill-gray-900"] {
+      fill: #94a3b8 !important;
+    }
+
+    /* Icons that only set fill when .group is hovered/focused need a visible default on dark surfaces */
+    html.${DARK_MODE_HTML_CLASS} svg[class*="group-hover:fill-white"],
+    html.${DARK_MODE_HTML_CLASS} svg[class*="group-focus-within:fill-white"] {
+      fill: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .group:hover svg[class*="group-hover:fill-white"],
+    html.${DARK_MODE_HTML_CLASS} .group:focus-within svg[class*="group-hover:fill-white"] {
+      fill: #ffffff !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-full"][class*="bg-white"]:hover svg[class*="group-hover:fill-white"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-full"][class*="group-hover:bg-secondary"]:hover svg[class*="group-hover:fill-white"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-full"][class*="group-focus-within:bg-secondary"]:focus-within svg[class*="group-hover:fill-white"] {
+      fill: #ffffff !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="fill-sincity-red-600"] {
+      fill: #a3a3a3 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="fill-sincity-red-800"] {
+      fill: #fb7185 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="text-burgundy-800"] {
+      color: #fecdd3 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .stroke-burgundy-900,
+    html.${DARK_MODE_HTML_CLASS} [class*="stroke-burgundy-900"] {
+      stroke: #a3a3a3 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .outline-burgundy-900,
+    html.${DARK_MODE_HTML_CLASS} .border-burgundy-900,
+    html.${DARK_MODE_HTML_CLASS} .border-burgundy-800,
+    html.${DARK_MODE_HTML_CLASS} [class*="outline-burgundy-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="border-burgundy-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="border-burgundy-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="outline-neutral-400"],
+    html.${DARK_MODE_HTML_CLASS} [class*="border-neutral-300"],
+    html.${DARK_MODE_HTML_CLASS} [class*="border-neutral-400"],
+    html.${DARK_MODE_HTML_CLASS} [class*="border-gray-500"],
+    html.${DARK_MODE_HTML_CLASS} [class*="border-secondary"],
+    html.${DARK_MODE_HTML_CLASS} [class*="outline-secondary"] {
+      outline-color: #525252 !important;
+      border-color: #525252 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="shadow-header"],
+    html.${DARK_MODE_HTML_CLASS} [class*="shadow-md"],
+    html.${DARK_MODE_HTML_CLASS} [class*="shadow-sm"] {
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .divide-gray-200 > :not([hidden]) ~ :not([hidden]),
+    html.${DARK_MODE_HTML_CLASS} [class*="divide-gray-"] > :not([hidden]) ~ :not([hidden]),
+    html.${DARK_MODE_HTML_CLASS} [class*="divide-neutral"] > :not([hidden]) ~ :not([hidden]) {
+      border-color: rgba(64, 64, 64, 0.75) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="ring-offset-white"] {
+      --tw-ring-offset-color: #0a0a0a !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="disabled:bg-gray-700"]:disabled {
+      background-color: #404040 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="disabled:border-gray-400"]:disabled {
+      border-color: #525252 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-zinc-50"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-zinc-100"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-zinc-200"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-slate-50"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-slate-100"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-slate-200"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-stone-50"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-stone-100"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-gray-50"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-gray-100"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-gray-200"] {
+      background-color: #262626 !important;
+    }
+
+    /* Unread / alert notification strip (bg-sincity-red-50) */
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] {
+      background-color: #3d2326 !important;
+      color: #f5f0f0 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] p,
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] [class*="text-body-"] {
+      color: #ece7e7 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] [class*="opacity-60"] {
+      color: #c9bdbd !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] button svg path {
+      fill: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] [class*="ring-gray-400"] {
+      --tw-ring-color: rgba(212, 212, 212, 0.55) !important;
+      color: #f5f5f5 !important;
+    }
+
+    /* Header / nav: icons without a Tailwind fill-* class (e.g. notification bell) */
+    html.${DARK_MODE_HTML_CLASS} header svg:not([class*="fill-"]) path,
+    html.${DARK_MODE_HTML_CLASS} nav svg:not([class*="fill-"]) path {
+      fill: #e5e5e5 !important;
+    }
+
+    /* Won / success (emerald) and highlight (orange) */
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] {
+      background-color: #022c22 !important;
+      color: #ecfdf5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] {
+      background-color: #064e3b !important;
+      color: #d1fae5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] {
+      background-color: #065f46 !important;
+      color: #ecfdf5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-600"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-600"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-600"] {
+      color: #ecfdf5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-100"] {
+      background-color: #7c2d12 !important;
+      color: #ffedd5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-100"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-100"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-100"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-100"] [class*="text-gray-600"] {
+      color: #fed7aa !important;
+    }
+
+    /* Lighter orange surfaces (e.g. thank-you strip) — use class~ to avoid matching bg-orange-500 */
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-50"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-50/"],
+    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-50"],
+    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-50"],
+    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-50"] {
+      background-color: #5c280d !important;
+      color: #ffedd5 !important;
+      border-color: rgba(253, 186, 116, 0.5) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-50"] .font-bold,
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-50/"] .font-bold,
+    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-50"] .font-bold,
+    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-50"] .font-bold,
+    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-50"] .font-bold,
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-50"] p,
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-50/"] p,
+    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-50"] p,
+    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-50"] p,
+    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-50"] p,
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-50"] div,
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-50/"] div,
+    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-50"] div,
+    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-50"] div,
+    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-50"] div {
+      color: #fff7ed !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-50"] a,
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-50/"] a,
+    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-50"] a,
+    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-50"] a,
+    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-50"] a {
+      color: #fdba74 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"][class*="ring-emerald"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"][class*="outline-emerald"],
+    html.${DARK_MODE_HTML_CLASS} [class*="ring-emerald-"],
+    html.${DARK_MODE_HTML_CLASS} [class*="outline-emerald"] {
+      --tw-ring-color: rgba(5, 150, 105, 0.65) !important;
+      outline-color: #047857 !important;
+      border-color: #047857 !important;
+    }
+
+    /* Dashboard appointments card (CSS-module classes; not always Tailwind bg-*) */
+    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"],
+    html.${DARK_MODE_HTML_CLASS} [class*="__my-appointments-card-container"] {
+      background-color: #1a1a1a !important;
+      color: #e5e5e5 !important;
+      border-color: #404040 !important;
+      border-radius: 14px !important;
+      overflow: hidden !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] > div {
+      background-color: #1a1a1a !important;
+      color: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointments-card-content"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointments-line-item-container"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointment-card-footer"] {
+      background-color: #1a1a1a !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointment-card-title"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointments-line-item-text"] {
+      color: #f5f5f5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointments-line-item-caption"] {
+      color: #a3a3a3 !important;
+    }
+
+    /* Location + hours card (embedded Google Map — keep controls/attribution readable) */
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"],
+    html.${DARK_MODE_HTML_CLASS} [class*="__card-base"][class*="__location-hours-card"] {
+      background-color: #1a1a1a !important;
+      color: #e5e5e5 !important;
+      border-color: #404040 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-card-content"] h4,
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-card-content"] p,
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-card-content"] li,
+    html.${DARK_MODE_HTML_CLASS} [class*="__hours-operations-list"],
+    html.${DARK_MODE_HTML_CLASS} [class*="__hours-operations-bold-text"] {
+      color: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] svg:not([class*="fill-"]) path {
+      fill: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] [style*="229, 227, 223"] {
+      background-color: #2a2a2a !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style {
+      color-scheme: light;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style-mtc button,
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-control-active,
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-svpc,
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] gmp-internal-camera-control button {
+      background-color: #ffffff !important;
+      color: #202124 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style-cc span,
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style-cc a,
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style-cc button {
+      color: #202124 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style-cc div[style*="245, 245, 245"] {
+      background-color: #e8e8e8 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gmnoscreen div {
+      background-color: #e8e8e8 !important;
+      color: #202124 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${CARD_ID} {
+      --nellis-compare-background: #262626;
+      --nellis-compare-text: #e5e5e5;
+      --nellis-compare-heading: #fafafa;
+      --nellis-compare-muted: #a3a3a3;
+      --nellis-compare-border: rgba(82, 82, 82, 0.55);
+      --nellis-compare-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${CARD_ID} .nellis-compare__image-wrap {
+      background: rgba(23, 23, 23, 0.92);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${CARD_ID} .nellis-compare__image {
+      background: #141414;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .nellis-export-button {
+      background: #262626;
+      color: #e5e5e5;
+      border-color: rgba(115, 115, 115, 0.45);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
     }
 
     @media (max-width: 720px) {
