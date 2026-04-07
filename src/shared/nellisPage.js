@@ -184,63 +184,6 @@ export function findItemDetailsAnchor(root = document) {
   );
 }
 
-/**
- * Finds the product **description** block only (no Item Details / title fallbacks).
- * When absent, callers should use `findItemDetailsAnchor()` instead.
- */
-export function findTitleDescriptionAnchor(root = document) {
-  const descriptionSelectorMatch = [
-    '[data-ax*="description"]',
-    '[data-testid*="description"]',
-    '[class*="description-card"]',
-    '[class*="DescriptionCard"]',
-    '[class*="__description"]',
-    '[class*="description"]',
-    '[class*="Description"]',
-  ]
-    .map((selector) => root.querySelector(selector))
-    .find((node) => {
-      if (!node) {
-        return false;
-      }
-      const haystack = `${node.getAttribute('class') || ''} ${node.getAttribute('data-ax') || ''}`.toLowerCase();
-      if (haystack.includes('item-details') || haystack.includes('itemdetails')) {
-        return false;
-      }
-      return true;
-    });
-
-  if (descriptionSelectorMatch) {
-    return (
-      descriptionSelectorMatch.closest('section') ||
-      descriptionSelectorMatch.closest('article') ||
-      descriptionSelectorMatch.closest('div') ||
-      descriptionSelectorMatch
-    );
-  }
-
-  const headings = Array.from(root.querySelectorAll('h1, h2, h3, h4, [role="heading"]'));
-  const descriptionHeading = headings.find((node) => {
-    const text = node.textContent?.trim().toLowerCase() || '';
-    if (text.includes('item details')) {
-      return false;
-    }
-    return text === 'description' || text.includes('item description');
-  });
-
-  if (descriptionHeading) {
-    return (
-      descriptionHeading.closest('section') ||
-      descriptionHeading.closest('article') ||
-      descriptionHeading.closest('div') ||
-      descriptionHeading.parentElement ||
-      descriptionHeading
-    );
-  }
-
-  return null;
-}
-
 function extractText(root, selectors) {
   for (const selector of selectors) {
     const node = root.querySelector(selector);

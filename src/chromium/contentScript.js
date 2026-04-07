@@ -3,7 +3,6 @@ import {
   findNellisPriceTargets,
   findNellisTimeTargets,
   findItemDetailsAnchor,
-  findTitleDescriptionAnchor,
   hasNellisPriceCards,
   isNellisAuctionSite,
   isNellisItemPage,
@@ -157,14 +156,9 @@ async function renderComparisonCard(routeKey) {
   }
 
   const nellisItem = extractNellisItem();
-  const descriptionAnchor = findTitleDescriptionAnchor();
   const itemDetailsAnchor = findItemDetailsAnchor();
-  const styleAnchor = descriptionAnchor || itemDetailsAnchor;
-  const placementTarget = descriptionAnchor || itemDetailsAnchor;
-  /** When there is no description block, insert the card immediately before Item Details. */
-  const placementMode = descriptionAnchor ? 'afterend' : 'beforebegin';
 
-  if (!nellisItem?.title || !styleAnchor || !placementTarget) {
+  if (!nellisItem?.title || !itemDetailsAnchor) {
     if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
       pendingRouteAttempts += 1;
       window.setTimeout(scheduleRender, RENDER_RETRY_MS);
@@ -193,7 +187,7 @@ async function renderComparisonCard(routeKey) {
   activeRouteKey = routeKey;
   lastRenderedTitle = nellisItem.title;
 
-  const card = ensureCard(styleAnchor, placementTarget, placementMode);
+  const card = ensureCard(itemDetailsAnchor);
   updateCardState(card, {
     state: 'loading',
     nellisItem,
@@ -257,7 +251,7 @@ function cleanupItemComparison(routeKey) {
   removeExistingCard();
 }
 
-function ensureCard(styleAnchor, placementTarget, placementMode) {
+function ensureCard(itemDetailsAnchor) {
   let card = document.getElementById(CARD_ID);
 
   if (!card) {
@@ -285,12 +279,10 @@ function ensureCard(styleAnchor, placementTarget, placementMode) {
     `;
   }
 
-  applyNativeCardStyling(card, styleAnchor);
+  applyNativeCardStyling(card, itemDetailsAnchor);
 
-  if (placementMode === 'beforebegin' && placementTarget.parentElement) {
-    placementTarget.parentElement.insertBefore(card, placementTarget);
-  } else {
-    placementTarget.insertAdjacentElement('afterend', card);
+  if (itemDetailsAnchor.parentElement) {
+    itemDetailsAnchor.parentElement.insertBefore(card, itemDetailsAnchor);
   }
 
   return card;
@@ -834,12 +826,12 @@ function refreshComparisonCardStyling() {
     return;
   }
 
-  const anchor = findTitleDescriptionAnchor() || findItemDetailsAnchor();
-  if (!anchor) {
+  const itemDetailsAnchor = findItemDetailsAnchor();
+  if (!itemDetailsAnchor) {
     return;
   }
 
-  applyNativeCardStyling(card, anchor);
+  applyNativeCardStyling(card, itemDetailsAnchor);
 }
 
 function renderDarkModeToggleButtons() {
@@ -1090,7 +1082,7 @@ function injectStyles() {
   style.id = STYLE_ID;
   style.textContent = `
     #${CARD_ID} {
-      margin: 16px 0;
+      margin: 0 0 16px;
       border: 0;
       border-radius: var(--nellis-compare-radius, 12px);
       background: var(--nellis-compare-background, #ffffff);
