@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nellis Enhanced",
-  "version": "2026.4.6",
+  "version": "2026.4.9",
   "description": "Nellis enhanced browser extension",
   "permissions": [],
   "host_permissions": [
