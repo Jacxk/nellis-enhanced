@@ -4,6 +4,7 @@
  * - Spotlight (`/spotlight/*`): same record shapes; loaders `routes/spotlight.*`
  * - Search / saved-searches: `products[].photos[]` or `products[].product.photos[]`
  * - Item pages: `item` / `listing` / loader-shaped objects with `photos` for the current product id
+ * - Close times: same loaders often include `closeTime` (Remix `Date` shape or ISO) per item row
  */
 
 const ITEM_PATH_RE = /^\/p\/[^/]+\/(\d+)\/?$/;
@@ -357,6 +358,106 @@ export function mergeNellisItemPagePhotoPayload(payload, pageItemId, intoMap) {
 
     if (Array.isArray(node.photos)) {
       tryRecord(node);
+    }
+
+    for (const v of Object.values(node)) {
+      if (v && typeof v === 'object') {
+        walk(v, depth + 1);
+      }
+    }
+  }
+
+  walk(payload, 0);
+  return changed;
+}
+
+function parseRemixCloseTime(raw) {
+  if (raw == null || raw === '') {
+    return null;
+  }
+  if (typeof raw === 'string') {
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof raw === 'object') {
+    if (raw.__type === 'Date' && typeof raw.value === 'string') {
+      const d = new Date(raw.value);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+  }
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    const d = new Date(raw);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+function pickCloseTimeFromRecord(record) {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+  const candidates = [
+    record.closeTime,
+    record.endTime,
+    record.auctionEndTime,
+    record.listing?.closeTime,
+    record.item?.closeTime,
+    record.product?.closeTime,
+    record.auction?.closeTime,
+  ];
+  for (const c of candidates) {
+    const d = parseRemixCloseTime(c);
+    if (d) {
+      return d;
+    }
+  }
+  return null;
+}
+
+/** Same formatting as the legacy HTML scrape path for `data-time-tooltip`. */
+export function formatNellisCloseTimeTooltip(date) {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+/**
+ * Walks Remix loader JSON and merges formatted close-time tooltips into `intoMap` keyed by Nellis item id.
+ * @returns {boolean} true if the map changed
+ */
+export function mergeCloseTimeFromRemixPayload(payload, intoMap) {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+
+  let changed = false;
+  const seen = new WeakSet();
+
+  function walk(node, depth) {
+    if (depth > 14 || !node || typeof node !== 'object') {
+      return;
+    }
+    if (seen.has(node)) {
+      return;
+    }
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      for (const el of node) {
+        walk(el, depth + 1);
+      }
+      return;
+    }
+
+    const id = resolveRecordItemId(node);
+    const closeDate = pickCloseTimeFromRecord(node);
+    if (id && closeDate) {
+      const text = formatNellisCloseTimeTooltip(closeDate);
+      if (intoMap.get(id) !== text) {
+        intoMap.set(id, text);
+        changed = true;
+      }
     }
 
     for (const v of Object.values(node)) {
