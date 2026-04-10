@@ -1084,7 +1084,7 @@ function renderWatchlistCountBadges(_routeKey) {
 
     let span = button.querySelector(`.${WATCHLIST_COUNT_CLASS}`);
 
-    if (count === undefined) {
+    if (count === undefined || count === 0) {
       span?.remove();
       continue;
     }
@@ -1130,14 +1130,20 @@ function needsWatchlistCountRefresh() {
       continue;
     }
     const count = watchlistCountByItemId.get(id);
-    if (count === undefined) {
-      continue;
-    }
     const button = form.querySelector('button');
     if (!(button instanceof HTMLElement)) {
       return true;
     }
     const span = button.querySelector(`.${WATCHLIST_COUNT_CLASS}`);
+    const shouldShow = count !== undefined && count > 0;
+
+    if (!shouldShow) {
+      if (span) {
+        return true;
+      }
+      continue;
+    }
+
     if (!span) {
       return true;
     }

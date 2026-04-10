@@ -344,9 +344,9 @@ export function injectStyles() {
       right: -7px;
       z-index: 2;
       box-sizing: border-box;
-      min-width: 15px;
-      height: 15px;
-      padding: 0 4px;
+      min-width: 14px;
+      height: 14px;
+      padding: 0 3px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -355,14 +355,11 @@ export function injectStyles() {
       line-height: 1;
       font-variant-numeric: tabular-nums;
       color: #fafafa;
-      background: rgba(220, 38, 38, 0.96);
+      background: rgba(15, 23, 42, 0.88);
       border-radius: 9999px;
       pointer-events: none;
       user-select: none;
-      border: 1.5px solid rgba(255, 255, 255, 0.95);
-      box-shadow:
-        0 0 0 1px rgba(15, 23, 42, 0.12),
-        0 2px 6px rgba(15, 23, 42, 0.28);
+      box-shadow: 0 2px 5px rgba(15, 23, 42, 0.35);
     }
 
     [data-ax="pickups-item-container"].nellis-cart-bulk-row {
@@ -1142,11 +1139,8 @@ export function injectStyles() {
 
     html.${DARK_MODE_HTML_CLASS} .${WATCHLIST_COUNT_CLASS} {
       color: #fafafa;
-      background: rgba(185, 28, 28, 0.98);
-      border-color: rgba(38, 38, 38, 0.95);
-      box-shadow:
-        0 0 0 1px rgba(0, 0, 0, 0.35),
-        0 2px 8px rgba(0, 0, 0, 0.45);
+      background: rgba(23, 23, 23, 0.92);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
     }
 
     @media (max-width: 720px) {
