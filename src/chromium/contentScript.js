@@ -1067,21 +1067,22 @@ function renderWatchlistCountBadges(_routeKey) {
   const forms = document.querySelectorAll(
     '[data-ax="item-card-watchlist-form"], [data-ax="product-page-watchlist-form"]'
   );
-  const activeForms = new Set();
+  const activeButtons = new Set();
 
   for (const form of forms) {
     if (!(form instanceof HTMLFormElement)) {
       continue;
     }
-    activeForms.add(form);
+    const button = form.querySelector('button');
+    if (!(button instanceof HTMLElement)) {
+      continue;
+    }
+    activeButtons.add(button);
+
     const id = getProductIdFromWatchlistForm(form);
     const count = id ? watchlistCountByItemId.get(id) : undefined;
 
-    let span =
-      form.nextElementSibling instanceof HTMLElement &&
-      form.nextElementSibling.classList.contains(WATCHLIST_COUNT_CLASS)
-        ? form.nextElementSibling
-        : null;
+    let span = button.querySelector(`.${WATCHLIST_COUNT_CLASS}`);
 
     if (count === undefined) {
       span?.remove();
@@ -1092,18 +1093,23 @@ function renderWatchlistCountBadges(_routeKey) {
       span = document.createElement('span');
       span.className = WATCHLIST_COUNT_CLASS;
       span.setAttribute('data-nellis-watchlist-count', '');
-      span.setAttribute('aria-label', `${count} on watchlist`);
-      form.insertAdjacentElement('afterend', span);
-    } else {
-      span.setAttribute('aria-label', `${count} on watchlist`);
+      button.appendChild(span);
     }
+    span.setAttribute('aria-label', `${count} on watchlist`);
     span.textContent = String(count);
   }
 
   for (const span of document.querySelectorAll(`.${WATCHLIST_COUNT_CLASS}`)) {
-    const prev = span.previousElementSibling;
-    if (!(prev instanceof HTMLFormElement) || !activeForms.has(prev)) {
+    const parent = span.parentElement;
+    if (!(parent instanceof HTMLElement) || !activeButtons.has(parent)) {
       span.remove();
+    }
+  }
+
+  for (const form of forms) {
+    const next = form.nextElementSibling;
+    if (next instanceof HTMLElement && next.classList.contains(WATCHLIST_COUNT_CLASS)) {
+      next.remove();
     }
   }
 }
@@ -1127,11 +1133,15 @@ function needsWatchlistCountRefresh() {
     if (count === undefined) {
       continue;
     }
-    const next = form.nextElementSibling;
-    if (!(next instanceof HTMLElement) || !next.classList.contains(WATCHLIST_COUNT_CLASS)) {
+    const button = form.querySelector('button');
+    if (!(button instanceof HTMLElement)) {
       return true;
     }
-    if (next.textContent !== String(count)) {
+    const span = button.querySelector(`.${WATCHLIST_COUNT_CLASS}`);
+    if (!span) {
+      return true;
+    }
+    if (span.textContent !== String(count)) {
       return true;
     }
   }

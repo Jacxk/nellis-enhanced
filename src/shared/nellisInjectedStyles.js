@@ -327,18 +327,33 @@ export function injectStyles() {
       object-fit: contain;
     }
 
+    form[data-ax="item-card-watchlist-form"] button:has(.${WATCHLIST_COUNT_CLASS}),
+    form[data-ax="product-page-watchlist-form"] button:has(.${WATCHLIST_COUNT_CLASS}) {
+      position: relative;
+    }
+
     .${WATCHLIST_COUNT_CLASS} {
+      position: absolute;
+      right: 1px;
+      bottom: 2px;
+      z-index: 1;
+      box-sizing: border-box;
+      min-width: 14px;
+      height: 14px;
+      padding: 0 3px;
       display: inline-flex;
       align-items: center;
-      align-self: center;
-      flex-shrink: 0;
-      font-size: 0.75rem;
-      font-weight: 600;
+      justify-content: center;
+      font-size: 9px;
+      font-weight: 700;
       line-height: 1;
       font-variant-numeric: tabular-nums;
-      color: #404040;
+      color: #fafafa;
+      background: rgba(15, 23, 42, 0.88);
+      border-radius: 9999px;
       pointer-events: none;
       user-select: none;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
     }
 
     [data-ax="pickups-item-container"].nellis-cart-bulk-row {
@@ -1117,7 +1132,9 @@ export function injectStyles() {
     }
 
     html.${DARK_MODE_HTML_CLASS} .${WATCHLIST_COUNT_CLASS} {
-      color: #d4d4d4;
+      color: #fafafa;
+      background: rgba(23, 23, 23, 0.92);
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
     }
 
     @media (max-width: 720px) {
