@@ -778,27 +778,40 @@ function removePurchasesExportButton() {
   }
 }
 
+function isCartRowBulkSaveForLaterEligible(row) {
+  return Boolean(
+    row.querySelector(
+      'button[name="_action"][value="save-for-later"], [data-ax="pickups-remove-from-cart"]'
+    )
+  );
+}
+
 function needsCartBulkUiRefresh() {
   if (!isNellisCartPage()) {
     return false;
   }
 
-  const rows = document.querySelectorAll('[data-ax="pickups-item-container"]');
-  if (!rows.length) {
+  const allRows = document.querySelectorAll('[data-ax="pickups-item-container"]');
+  if (!allRows.length) {
     return false;
+  }
+
+  for (const row of allRows) {
+    if (!isCartRowBulkSaveForLaterEligible(row) && row.querySelector('.nellis-cart-bulk-cb')) {
+      return true;
+    }
+  }
+
+  const eligibleRows = Array.from(allRows).filter(isCartRowBulkSaveForLaterEligible);
+  if (!eligibleRows.length) {
+    return Boolean(document.getElementById(CART_BULK_TOOLBAR_ID));
   }
 
   if (!document.getElementById(CART_BULK_TOOLBAR_ID)) {
     return true;
   }
 
-  for (const row of rows) {
-    if (!row.querySelector('.nellis-cart-bulk-cb')) {
-      return true;
-    }
-  }
-
-  return false;
+  return eligibleRows.some((row) => !row.querySelector('.nellis-cart-bulk-cb'));
 }
 
 function renderCartBulkSaveUi(routeKey) {
@@ -814,8 +827,8 @@ function renderCartBulkSaveUi(routeKey) {
     cartBulkRenderAttempts = 0;
   }
 
-  const rows = document.querySelectorAll('[data-ax="pickups-item-container"]');
-  if (!rows.length) {
+  const allRows = document.querySelectorAll('[data-ax="pickups-item-container"]');
+  if (!allRows.length) {
     if (cartBulkRenderAttempts < MAX_RENDER_RETRIES) {
       cartBulkRenderAttempts += 1;
       window.setTimeout(scheduleRender, RENDER_RETRY_MS);
@@ -825,7 +838,20 @@ function renderCartBulkSaveUi(routeKey) {
 
   cartBulkRenderAttempts = 0;
 
-  for (const row of rows) {
+  for (const row of allRows) {
+    if (!isCartRowBulkSaveForLaterEligible(row)) {
+      row.querySelector('.nellis-cart-bulk-cb')?.remove();
+      row.classList.remove('nellis-cart-bulk-row');
+    }
+  }
+
+  const eligibleRows = Array.from(allRows).filter(isCartRowBulkSaveForLaterEligible);
+  if (!eligibleRows.length) {
+    document.getElementById(CART_BULK_TOOLBAR_ID)?.remove();
+    return;
+  }
+
+  for (const row of eligibleRows) {
     if (row.querySelector('.nellis-cart-bulk-cb')) {
       continue;
     }
@@ -917,12 +943,14 @@ function removeCartBulkUi() {
   }
 }
 
-function getCartBulkRows() {
-  return Array.from(document.querySelectorAll('[data-ax="pickups-item-container"]'));
+function getEligibleCartBulkSaveRows() {
+  return Array.from(document.querySelectorAll('[data-ax="pickups-item-container"]')).filter(
+    isCartRowBulkSaveForLaterEligible
+  );
 }
 
 function setAllCartBulkCheckboxes(checked) {
-  for (const row of getCartBulkRows()) {
+  for (const row of getEligibleCartBulkSaveRows()) {
     const checkbox = row.querySelector('.nellis-cart-bulk-cb');
     if (checkbox instanceof HTMLInputElement) {
       checkbox.checked = checked;
@@ -943,7 +971,7 @@ function syncCartBulkToolbar() {
     return;
   }
 
-  const selectedCount = getCartBulkRows().filter((row) => {
+  const selectedCount = getEligibleCartBulkSaveRows().filter((row) => {
     const checkbox = row.querySelector('.nellis-cart-bulk-cb');
     return checkbox instanceof HTMLInputElement && checkbox.checked;
   }).length;
@@ -1030,7 +1058,7 @@ async function handleCartBulkSaveForLater() {
     return;
   }
 
-  const selectedRows = getCartBulkRows().filter((row) => {
+  const selectedRows = getEligibleCartBulkSaveRows().filter((row) => {
     const checkbox = row.querySelector('.nellis-cart-bulk-cb');
     return checkbox instanceof HTMLInputElement && checkbox.checked;
   });
