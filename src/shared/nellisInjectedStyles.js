@@ -11,6 +11,7 @@ import {
   PREMIUM_HINT_CLASS,
   STYLE_ID,
   TIME_HINT_CLASS,
+  WATCHLIST_COUNT_CLASS,
 } from './nellisUiConstants.js';
 
 export function injectStyles() {
@@ -324,6 +325,20 @@ export function injectStyles() {
       width: 100%;
       height: 100%;
       object-fit: contain;
+    }
+
+    .${WATCHLIST_COUNT_CLASS} {
+      display: inline-flex;
+      align-items: center;
+      align-self: center;
+      flex-shrink: 0;
+      font-size: 0.75rem;
+      font-weight: 600;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      color: #404040;
+      pointer-events: none;
+      user-select: none;
     }
 
     [data-ax="pickups-item-container"].nellis-cart-bulk-row {
@@ -1099,6 +1114,10 @@ export function injectStyles() {
 
     html.${DARK_MODE_HTML_CLASS} .${AUCTION_LIST_PHOTO_BAR_CLASS} button:hover {
       background: rgba(255, 255, 255, 0.2);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .${WATCHLIST_COUNT_CLASS} {
+      color: #d4d4d4;
     }
 
     @media (max-width: 720px) {
