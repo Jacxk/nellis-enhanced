@@ -19,10 +19,17 @@
         "https://www.nellisauction.com/*",
         "https://nellisauction.com/*"
       ],
-      "js": [
-        "contentScript.bundle.js"
+      "js": ["pageWorldFetchBridge.bundle.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.nellisauction.com/*",
+        "https://nellisauction.com/*"
       ],
-      "run_at": "document_idle"
+      "js": ["contentScript.bundle.js"],
+      "run_at": "document_start"
     }
   ],
   "icons": {

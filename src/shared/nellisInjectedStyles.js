@@ -1,4 +1,6 @@
 import {
+  AUCTION_LIST_PHOTO_BAR_CLASS,
+  AUCTION_LIST_PHOTO_WRAP_CLASS,
   BID_TOTAL_HINT_CLASS,
   CARD_ID,
   CART_BULK_CHECKOUT_TOOLBAR_ID,
@@ -249,6 +251,79 @@ export function injectStyles() {
     .nellis-export-button:disabled {
       cursor: wait;
       opacity: 0.7;
+    }
+
+    .${AUCTION_LIST_PHOTO_WRAP_CLASS} {
+      position: relative;
+      display: inline-block;
+      max-width: 100%;
+      vertical-align: top;
+    }
+
+    .${AUCTION_LIST_PHOTO_WRAP_CLASS} img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+    }
+
+    .${AUCTION_LIST_PHOTO_BAR_CLASS} {
+      position: absolute;
+      right: 4px;
+      bottom: 4px;
+      left: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      padding: 3px 4px;
+      border-radius: 8px;
+      background: rgba(15, 23, 42, 0.72);
+      backdrop-filter: blur(4px);
+      pointer-events: auto;
+      z-index: 4;
+    }
+
+    .${AUCTION_LIST_PHOTO_BAR_CLASS} button {
+      flex: 0 0 auto;
+      margin: 0;
+      padding: 0 6px;
+      min-width: 26px;
+      height: 24px;
+      border: 0;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.2);
+      color: #f9fafb;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1;
+      cursor: pointer;
+    }
+
+    .${AUCTION_LIST_PHOTO_BAR_CLASS} button:hover {
+      background: rgba(255, 255, 255, 0.32);
+    }
+
+    .${AUCTION_LIST_PHOTO_BAR_CLASS} [data-nellis-photo-count] {
+      flex: 1 1 auto;
+      min-width: 0;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 600;
+      color: rgba(249, 250, 251, 0.92);
+      letter-spacing: 0.02em;
+    }
+
+    a[data-ax="item-card-image-link"] .${AUCTION_LIST_PHOTO_WRAP_CLASS} {
+      width: 100%;
+      height: 100%;
+      max-width: none;
+      display: block;
+    }
+
+    a[data-ax="item-card-image-link"] .${AUCTION_LIST_PHOTO_WRAP_CLASS} img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
     }
 
     [data-ax="pickups-item-container"].nellis-cart-bulk-row {
@@ -1011,6 +1086,19 @@ export function injectStyles() {
       color: #e5e5e5;
       border-color: rgba(115, 115, 115, 0.45);
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .${AUCTION_LIST_PHOTO_BAR_CLASS} {
+      background: rgba(23, 23, 23, 0.85);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .${AUCTION_LIST_PHOTO_BAR_CLASS} button {
+      background: rgba(255, 255, 255, 0.12);
+      color: #fafafa;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .${AUCTION_LIST_PHOTO_BAR_CLASS} button:hover {
+      background: rgba(255, 255, 255, 0.2);
     }
 
     @media (max-width: 720px) {

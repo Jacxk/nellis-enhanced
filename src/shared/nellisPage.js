@@ -216,3 +216,22 @@ export function isNellisAuctionSite(locationObject = window.location) {
 export function isNellisCartPage(locationObject = window.location) {
   return isNellisAuctionSite(locationObject) && /^\/dashboard\/cart(\/|$)/.test(locationObject.pathname);
 }
+
+/** Dashboard auction list routes (active, won, etc.) that load item rows with thumbnails */
+export function isNellisDashboardAuctionListPage(locationObject = window.location) {
+  return isNellisAuctionSite(locationObject) && /^\/dashboard\/auctions\//.test(locationObject.pathname);
+}
+
+/** Product search / refine listing (Remix loaders use `products[].photos`, not `myAuctions.records`) */
+export function isNellisSearchPage(locationObject = window.location) {
+  if (!isNellisAuctionSite(locationObject)) {
+    return false;
+  }
+  const path = locationObject.pathname || '';
+  return /^\/search(\/|$)/.test(path) || /^\/dashboard\/search(\/|$)/.test(path);
+}
+
+/** Spotlight (deals, first-bid, saved-searches, …) — loaders use `dealAuctions` / `noBidAuctions` records */
+export function isNellisSpotlightPage(locationObject = window.location) {
+  return isNellisAuctionSite(locationObject) && /^\/spotlight(\/|$)/.test(locationObject.pathname || '');
+}
