@@ -327,20 +327,26 @@ export function injectStyles() {
       object-fit: contain;
     }
 
+    form[data-ax="item-card-watchlist-form"],
+    form[data-ax="product-page-watchlist-form"] {
+      overflow: visible;
+    }
+
     form[data-ax="item-card-watchlist-form"] button:has(.${WATCHLIST_COUNT_CLASS}),
     form[data-ax="product-page-watchlist-form"] button:has(.${WATCHLIST_COUNT_CLASS}) {
       position: relative;
+      overflow: visible;
     }
 
     .${WATCHLIST_COUNT_CLASS} {
       position: absolute;
-      right: 1px;
-      bottom: 2px;
-      z-index: 1;
+      top: -7px;
+      right: -7px;
+      z-index: 2;
       box-sizing: border-box;
-      min-width: 14px;
-      height: 14px;
-      padding: 0 3px;
+      min-width: 15px;
+      height: 15px;
+      padding: 0 4px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -349,11 +355,14 @@ export function injectStyles() {
       line-height: 1;
       font-variant-numeric: tabular-nums;
       color: #fafafa;
-      background: rgba(15, 23, 42, 0.88);
+      background: rgba(220, 38, 38, 0.96);
       border-radius: 9999px;
       pointer-events: none;
       user-select: none;
-      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+      border: 1.5px solid rgba(255, 255, 255, 0.95);
+      box-shadow:
+        0 0 0 1px rgba(15, 23, 42, 0.12),
+        0 2px 6px rgba(15, 23, 42, 0.28);
     }
 
     [data-ax="pickups-item-container"].nellis-cart-bulk-row {
@@ -1133,8 +1142,11 @@ export function injectStyles() {
 
     html.${DARK_MODE_HTML_CLASS} .${WATCHLIST_COUNT_CLASS} {
       color: #fafafa;
-      background: rgba(23, 23, 23, 0.92);
-      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+      background: rgba(185, 28, 28, 0.98);
+      border-color: rgba(38, 38, 38, 0.95);
+      box-shadow:
+        0 0 0 1px rgba(0, 0, 0, 0.35),
+        0 2px 8px rgba(0, 0, 0, 0.45);
     }
 
     @media (max-width: 720px) {
