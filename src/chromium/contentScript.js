@@ -23,6 +23,7 @@ const DARK_MODE_TOGGLE_ID = 'nellis-dark-mode-toggle';
 const DARK_MODE_HTML_CLASS = 'nellis-dark-mode';
 const DARK_MODE_STORAGE_KEY = 'nellisAuctionDarkMode';
 const BID_TOTAL_HINT_CLASS = 'nellis-bid-total-hint';
+const CART_ITEM_FEE_HINT_CLASS = 'nellis-cart-item-fee-hint';
 const DARK_MODE_ICON_MOON =
   '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" width="17" height="17" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" /></svg>';
 const DARK_MODE_ICON_SUN =
@@ -135,6 +136,7 @@ async function renderPageFeatures() {
   attachPricePremiumHint();
   attachBidTotalPremiumHint();
   attachTimeEndHint();
+  attachCartItemFeeHint();
 
   if (!isNellisItemPage()) {
     cleanupItemComparison(routeKey);
@@ -478,6 +480,95 @@ function updateBidTotalHint(hint, input) {
   hint.textContent = `Total: ${formatCurrency(total)} (+${formatCurrency(premium)} fees)`;
 }
 
+function attachCartItemFeeHint(root = document) {
+  if (!isCartPage()) {
+    removeCartItemFeeHints(root);
+    return;
+  }
+
+  const containers = root.querySelectorAll('[data-ax="pickups-item-container"]');
+  const activeContainers = new Set();
+
+  for (const container of containers) {
+    if (!(container instanceof HTMLElement)) {
+      continue;
+    }
+
+    const targets = findCartItemPriceTargets(container);
+    if (!targets) {
+      continue;
+    }
+
+    const { priceNode, insertAfterNode } = targets;
+    const amount = parseCurrencyAmount(priceNode.textContent);
+    if (amount === null) {
+      continue;
+    }
+
+    const hint = ensureCartItemFeeHint(container, insertAfterNode);
+    updateCartItemFeeHint(hint, amount);
+    activeContainers.add(container);
+  }
+
+  removeStaleCartItemFeeHints(activeContainers);
+}
+
+function findCartItemPriceTargets(container) {
+  const form = container.querySelector('form[action^="/dashboard/cart/"]');
+  if (!form?.parentElement) {
+    return null;
+  }
+
+  const priceNode = form.parentElement.querySelector('p');
+  if (!(priceNode instanceof HTMLParagraphElement)) {
+    return null;
+  }
+
+  return { priceNode, insertAfterNode: priceNode };
+}
+
+function ensureCartItemFeeHint(container, insertAfterNode) {
+  const existing = container.querySelector(`.${CART_ITEM_FEE_HINT_CLASS}`);
+  if (existing instanceof HTMLElement) {
+    return existing;
+  }
+
+  const hint = document.createElement('div');
+  hint.className = `${CART_ITEM_FEE_HINT_CLASS} text-label-sm opacity-60`;
+  hint.setAttribute('role', 'note');
+  hint.setAttribute('aria-live', 'polite');
+
+  insertAfterNode.insertAdjacentElement('afterend', hint);
+  return hint;
+}
+
+function updateCartItemFeeHint(hint, amount) {
+  if (!(hint instanceof HTMLElement)) {
+    return;
+  }
+
+  const total = amount * (1 + BUYER_PREMIUM_RATE);
+  const premium = total - amount;
+  hint.hidden = false;
+  hint.textContent = `Total: ${formatCurrency(total)} (+${formatCurrency(premium)} fees)`;
+  hint.dataset.premiumSourceAmount = amount.toFixed(2);
+}
+
+function removeStaleCartItemFeeHints(activeContainers) {
+  for (const node of document.querySelectorAll(`.${CART_ITEM_FEE_HINT_CLASS}`)) {
+    const owner = node.closest('[data-ax="pickups-item-container"]');
+    if (!owner || !activeContainers.has(owner)) {
+      node.remove();
+    }
+  }
+}
+
+function removeCartItemFeeHints(root = document) {
+  for (const node of root.querySelectorAll(`.${CART_ITEM_FEE_HINT_CLASS}`)) {
+    node.remove();
+  }
+}
+
 function cssEscape(value) {
   if (typeof value !== 'string' || !value) {
     return '';
@@ -698,6 +789,10 @@ function removeStaleTimeTargets(activeTargets) {
 
 function isPurchasesPage(locationObject = window.location) {
   return locationObject.pathname === '/dashboard/purchases';
+}
+
+function isCartPage(locationObject = window.location) {
+  return locationObject.pathname === '/dashboard/cart' || locationObject.pathname.startsWith('/dashboard/cart/');
 }
 
 function renderPurchasesExportButton(routeKey) {
@@ -1323,6 +1418,17 @@ function injectStyles() {
     }
 
     html.${DARK_MODE_HTML_CLASS} .${BID_TOTAL_HINT_CLASS} {
+      color: rgba(229, 229, 229, 0.78);
+    }
+
+    .${CART_ITEM_FEE_HINT_CLASS} {
+      margin-top: 2px;
+      font-size: 12px;
+      line-height: 1.25;
+      letter-spacing: 0.01em;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .${CART_ITEM_FEE_HINT_CLASS} {
       color: rgba(229, 229, 229, 0.78);
     }
 
