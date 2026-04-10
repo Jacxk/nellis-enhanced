@@ -51,8 +51,26 @@ init();
 function init() {
   injectStyles();
   applyStoredDarkMode();
+  installDarkModeResyncListeners();
   installRouteListeners();
   scheduleRender();
+}
+
+function installDarkModeResyncListeners() {
+  // Background/prerendered tabs can temporarily deny storage access. Re-apply on activation.
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      applyStoredDarkMode();
+      syncDarkModeToggleButtons();
+      refreshComparisonCardStyling();
+    }
+  });
+
+  window.addEventListener('pageshow', () => {
+    applyStoredDarkMode();
+    syncDarkModeToggleButtons();
+    refreshComparisonCardStyling();
+  });
 }
 
 function installRouteListeners() {
@@ -130,6 +148,7 @@ function scheduleRender() {
 async function renderPageFeatures() {
   const routeKey = `${window.location.pathname}${window.location.search}`;
   injectStyles();
+  applyStoredDarkMode();
   renderPurchasesExportButton(routeKey);
   renderDarkModeToggleButtons();
   attachPricePremiumHint();
@@ -1523,6 +1542,16 @@ function injectStyles() {
       color: #e5e5e5 !important;
     }
 
+    html.${DARK_MODE_HTML_CLASS} [class*="text-slate-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="text-slate-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="text-zinc-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="text-zinc-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="text-stone-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="text-stone-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="text-black"] {
+      color: #e5e5e5 !important;
+    }
+
     html.${DARK_MODE_HTML_CLASS} [class*="text-burgundy-900"],
     html.${DARK_MODE_HTML_CLASS} [class*="text-secondary"] {
       color: #d4d4d4 !important;
@@ -1664,6 +1693,12 @@ function injectStyles() {
       color: #fafafa !important;
     }
 
+    /* Search pagination (CSS-module): "Showing 1 - … of …" */
+    html.${DARK_MODE_HTML_CLASS} [data-ax="search-pagination-container"] [class*="__pagination-header"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="search-pagination-container"] [class*="__pagination-header"] span {
+      color: #e5e5e5 !important;
+    }
+
     html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] p,
     html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] [class*="text-body-"] {
       color: #ece7e7 !important;
@@ -1688,34 +1723,42 @@ function injectStyles() {
       fill: #e5e5e5 !important;
     }
 
-    /* Won / success (emerald) and highlight (orange) */
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] {
+    /* Won / success (emerald) and highlight (orange)
+     * Scope to card-like surfaces to avoid painting entire pages (e.g. Fees page wrappers).
+     */
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"][class*="rounded"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"][class*="shadow"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax*="card"][class*="bg-emerald-50"] {
       background-color: #022c22 !important;
       color: #ecfdf5 !important;
     }
 
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] {
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"][class*="rounded"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"][class*="shadow"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax*="card"][class*="bg-emerald-100"] {
       background-color: #064e3b !important;
       color: #d1fae5 !important;
     }
 
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] {
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"][class*="rounded"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"][class*="shadow"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax*="card"][class*="bg-emerald-200"] {
       background-color: #065f46 !important;
       color: #ecfdf5 !important;
     }
 
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-700"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-600"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-700"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-600"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-700"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-600"] {
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"][class*="rounded"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"][class*="rounded"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"][class*="rounded"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"][class*="rounded"] [class*="text-gray-600"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"][class*="rounded"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"][class*="rounded"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"][class*="rounded"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"][class*="rounded"] [class*="text-gray-600"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"][class*="rounded"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"][class*="rounded"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"][class*="rounded"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"][class*="rounded"] [class*="text-gray-600"] {
       color: #ecfdf5 !important;
     }
 
@@ -1872,6 +1915,20 @@ function injectStyles() {
 
     html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointments-line-item-caption"] {
       color: #a3a3a3 !important;
+    }
+
+    /* Receipts + cart items: use a "card" surface, not page surface */
+    html.${DARK_MODE_HTML_CLASS} [class~="bg-white"][class*="rounded-itemCard"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="pickups-item-container"][class~="bg-white"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="pickups-item-container"][class*="bg-white"] {
+      background-color: #262626 !important;
+      border-color: rgba(82, 82, 82, 0.55) !important;
+    }
+
+    /* Dashboard cards that are visually "cards" but can be transparent (e.g. Cart items, Receipts) */
+    html.${DARK_MODE_HTML_CLASS} main [class*="shadow-"][class*="rounded"]:not([class*="bg-"]) {
+      background-color: #1a1a1a !important;
+      border-color: #404040 !important;
     }
 
     /* Location + hours card (embedded Google Map — keep controls/attribution readable) */
