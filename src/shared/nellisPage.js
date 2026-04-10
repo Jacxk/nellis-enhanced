@@ -212,3 +212,7 @@ export function isNellisAuctionSite(locationObject = window.location) {
   const host = locationObject.hostname || '';
   return host === 'www.nellisauction.com' || host === 'nellisauction.com';
 }
+
+export function isNellisCartPage(locationObject = window.location) {
+  return isNellisAuctionSite(locationObject) && /^\/dashboard\/cart(\/|$)/.test(locationObject.pathname);
+}

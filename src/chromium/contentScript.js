@@ -5,6 +5,7 @@ import {
   findItemDetailsAnchor,
   hasNellisPriceCards,
   isNellisAuctionSite,
+  isNellisCartPage,
   isNellisItemPage,
   isNellisOnlyItemTitle,
   parseCurrencyAmount,
@@ -18,6 +19,7 @@ const STYLE_ID = 'nellis-amazon-compare-style';
 const PREMIUM_HINT_CLASS = 'nellis-premium-hint';
 const TIME_HINT_CLASS = 'nellis-time-hint';
 const PURCHASES_EXPORT_ID = 'nellis-purchases-export';
+const CART_BULK_TOOLBAR_ID = 'nellis-cart-bulk-toolbar';
 const DARK_MODE_TOGGLE_CLASS = 'nellis-dark-mode-toggle';
 const DARK_MODE_TOGGLE_ID = 'nellis-dark-mode-toggle';
 const DARK_MODE_HTML_CLASS = 'nellis-dark-mode';
@@ -43,6 +45,9 @@ let pendingRouteAttempts = 0;
 let purchasesExportInFlight = false;
 let purchasesRouteKey = '';
 let purchasesRenderAttempts = 0;
+let cartBulkRouteKey = '';
+let cartBulkRenderAttempts = 0;
+let cartBulkSaveInFlight = false;
 let lastKnownUrl = window.location.href;
 const closeTimeCache = new Map();
 
@@ -77,6 +82,7 @@ function installRouteListeners() {
   const observer = new MutationObserver(() => {
     if (
       (isPurchasesPage() && !document.getElementById(PURCHASES_EXPORT_ID)) ||
+      (isNellisCartPage() && needsCartBulkUiRefresh()) ||
       (isNellisItemPage() && !document.getElementById(CARD_ID)) ||
       (isNellisAuctionSite() && needsDarkModeToggleRender()) ||
       hasTooltipRefreshTargets() ||
@@ -106,6 +112,11 @@ function installRouteListeners() {
       return;
     }
 
+    if (isNellisCartPage() && needsCartBulkUiRefresh()) {
+      scheduleRender();
+      return;
+    }
+
     if (isNellisItemPage() && !document.getElementById(CARD_ID)) {
       scheduleRender();
       return;
@@ -131,6 +142,7 @@ async function renderPageFeatures() {
   const routeKey = `${window.location.pathname}${window.location.search}`;
   injectStyles();
   renderPurchasesExportButton(routeKey);
+  renderCartBulkSaveUi(routeKey);
   renderDarkModeToggleButtons();
   attachPricePremiumHint();
   attachBidTotalPremiumHint();
@@ -766,6 +778,294 @@ function removePurchasesExportButton() {
   }
 }
 
+function needsCartBulkUiRefresh() {
+  if (!isNellisCartPage()) {
+    return false;
+  }
+
+  const rows = document.querySelectorAll('[data-ax="pickups-item-container"]');
+  if (!rows.length) {
+    return false;
+  }
+
+  if (!document.getElementById(CART_BULK_TOOLBAR_ID)) {
+    return true;
+  }
+
+  for (const row of rows) {
+    if (!row.querySelector('.nellis-cart-bulk-cb')) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function renderCartBulkSaveUi(routeKey) {
+  if (!isNellisCartPage()) {
+    cartBulkRouteKey = '';
+    cartBulkRenderAttempts = 0;
+    removeCartBulkUi();
+    return;
+  }
+
+  if (cartBulkRouteKey !== routeKey) {
+    cartBulkRouteKey = routeKey;
+    cartBulkRenderAttempts = 0;
+  }
+
+  const rows = document.querySelectorAll('[data-ax="pickups-item-container"]');
+  if (!rows.length) {
+    if (cartBulkRenderAttempts < MAX_RENDER_RETRIES) {
+      cartBulkRenderAttempts += 1;
+      window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    }
+    return;
+  }
+
+  cartBulkRenderAttempts = 0;
+
+  for (const row of rows) {
+    if (row.querySelector('.nellis-cart-bulk-cb')) {
+      continue;
+    }
+
+    row.classList.add('nellis-cart-bulk-row');
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'nellis-cart-bulk-cb';
+    checkbox.setAttribute('aria-label', 'Select item for bulk save for later');
+    checkbox.addEventListener('change', () => {
+      syncCartBulkToolbar();
+    });
+    row.prepend(checkbox);
+  }
+
+  const anchor = findCartBulkAnchor();
+  if (!anchor) {
+    return;
+  }
+
+  let toolbar = document.getElementById(CART_BULK_TOOLBAR_ID);
+  if (!toolbar) {
+    toolbar = document.createElement('div');
+    toolbar.id = CART_BULK_TOOLBAR_ID;
+    toolbar.className = 'nellis-cart-bulk-toolbar';
+
+    const selectAll = document.createElement('button');
+    selectAll.type = 'button';
+    selectAll.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--ghost';
+    selectAll.textContent = 'Select all';
+    selectAll.addEventListener('click', () => {
+      setAllCartBulkCheckboxes(true);
+    });
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--ghost';
+    clearBtn.textContent = 'Clear selection';
+    clearBtn.addEventListener('click', () => {
+      setAllCartBulkCheckboxes(false);
+    });
+
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--primary';
+    saveBtn.dataset.role = 'save';
+    saveBtn.addEventListener('click', handleCartBulkSaveForLater);
+
+    const hint = document.createElement('p');
+    hint.className = 'nellis-cart-bulk-toolbar__hint';
+    hint.dataset.role = 'hint';
+    hint.textContent =
+      'Each selected item is saved with the same request the site uses for “Save for later” (one request per item).';
+
+    toolbar.append(selectAll, clearBtn, saveBtn, hint);
+  }
+
+  if (toolbar.parentElement !== anchor) {
+    anchor.appendChild(toolbar);
+  }
+
+  syncCartBulkToolbar();
+}
+
+function findCartBulkAnchor(root = document) {
+  const headings = Array.from(root.querySelectorAll('h1, h2, h3, [role="heading"]'));
+  const cartHeading = headings.find((node) => node.textContent?.trim().toLowerCase().includes('cart'));
+
+  if (cartHeading?.parentElement) {
+    return cartHeading.parentElement;
+  }
+
+  return root.querySelector('main') || null;
+}
+
+function removeCartBulkUi() {
+  const toolbar = document.getElementById(CART_BULK_TOOLBAR_ID);
+  if (toolbar) {
+    toolbar.remove();
+  }
+
+  for (const checkbox of document.querySelectorAll('.nellis-cart-bulk-cb')) {
+    checkbox.remove();
+  }
+
+  for (const row of document.querySelectorAll('.nellis-cart-bulk-row')) {
+    row.classList.remove('nellis-cart-bulk-row');
+  }
+}
+
+function getCartBulkRows() {
+  return Array.from(document.querySelectorAll('[data-ax="pickups-item-container"]'));
+}
+
+function setAllCartBulkCheckboxes(checked) {
+  for (const row of getCartBulkRows()) {
+    const checkbox = row.querySelector('.nellis-cart-bulk-cb');
+    if (checkbox instanceof HTMLInputElement) {
+      checkbox.checked = checked;
+    }
+  }
+  syncCartBulkToolbar();
+}
+
+function syncCartBulkToolbar() {
+  const toolbar = document.getElementById(CART_BULK_TOOLBAR_ID);
+  if (!toolbar) {
+    return;
+  }
+
+  const saveBtn = toolbar.querySelector('[data-role="save"]');
+  const hint = toolbar.querySelector('[data-role="hint"]');
+  if (!(saveBtn instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const selectedCount = getCartBulkRows().filter((row) => {
+    const checkbox = row.querySelector('.nellis-cart-bulk-cb');
+    return checkbox instanceof HTMLInputElement && checkbox.checked;
+  }).length;
+
+  saveBtn.disabled = selectedCount === 0 || cartBulkSaveInFlight;
+  saveBtn.textContent =
+    selectedCount === 0
+      ? 'Save selected for later'
+      : `Save selected for later (${selectedCount})`;
+
+  if (hint instanceof HTMLElement) {
+    hint.hidden = cartBulkSaveInFlight;
+  }
+}
+
+function buildCartSaveForLaterBody(form) {
+  const data = new URLSearchParams();
+
+  for (const element of form.elements) {
+    if (
+      !(
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLSelectElement ||
+        element instanceof HTMLTextAreaElement
+      )
+    ) {
+      continue;
+    }
+
+    if (element.disabled || !element.name) {
+      continue;
+    }
+
+    if (element instanceof HTMLInputElement && (element.type === 'checkbox' || element.type === 'radio')) {
+      if (element.checked) {
+        data.append(element.name, element.value);
+      }
+      continue;
+    }
+
+    if (element instanceof HTMLInputElement && element.type === 'file') {
+      continue;
+    }
+
+    data.append(element.name, element.value);
+  }
+
+  data.set('_action', 'save-for-later');
+  return data;
+}
+
+async function postSaveForLaterForRow(row) {
+  const form = row.querySelector('form[action*="/dashboard/cart"]');
+  if (!(form instanceof HTMLFormElement)) {
+    throw new Error('Cart form not found for a selected row.');
+  }
+
+  const action = form.getAttribute('action');
+  if (!action) {
+    throw new Error('Cart form is missing an action URL.');
+  }
+
+  const actionUrl = new URL(action, window.location.origin).toString();
+  const body = buildCartSaveForLaterBody(form);
+
+  const response = await fetch(actionUrl, {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+    },
+    body: body.toString(),
+    redirect: 'follow',
+  });
+
+  if (!response.ok) {
+    throw new Error(`Save for later failed with status ${response.status}.`);
+  }
+}
+
+async function handleCartBulkSaveForLater() {
+  if (cartBulkSaveInFlight) {
+    return;
+  }
+
+  const selectedRows = getCartBulkRows().filter((row) => {
+    const checkbox = row.querySelector('.nellis-cart-bulk-cb');
+    return checkbox instanceof HTMLInputElement && checkbox.checked;
+  });
+
+  if (!selectedRows.length) {
+    return;
+  }
+
+  cartBulkSaveInFlight = true;
+  syncCartBulkToolbar();
+
+  const saveBtn = document.querySelector(`#${CART_BULK_TOOLBAR_ID} [data-role="save"]`);
+  if (saveBtn instanceof HTMLButtonElement) {
+    saveBtn.textContent = `Saving… (0/${selectedRows.length})`;
+  }
+
+  try {
+    let index = 0;
+    for (const row of selectedRows) {
+      await postSaveForLaterForRow(row);
+      index += 1;
+      if (saveBtn instanceof HTMLButtonElement) {
+        saveBtn.textContent = `Saving… (${index}/${selectedRows.length})`;
+      }
+    }
+    window.location.reload();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Save for later failed.';
+    window.alert(message);
+  } finally {
+    cartBulkSaveInFlight = false;
+    syncCartBulkToolbar();
+  }
+}
+
 function needsDarkModeToggleRender() {
   return isNellisAuctionSite() && !document.getElementById(DARK_MODE_TOGGLE_ID);
 }
@@ -1311,6 +1611,85 @@ function injectStyles() {
     .nellis-export-button:disabled {
       cursor: wait;
       opacity: 0.7;
+    }
+
+    [data-ax="pickups-item-container"].nellis-cart-bulk-row {
+      position: relative;
+      padding-left: 40px;
+    }
+
+    .nellis-cart-bulk-cb {
+      position: absolute;
+      left: 12px;
+      top: 14px;
+      z-index: 3;
+      width: 18px;
+      height: 18px;
+      margin: 0;
+      cursor: pointer;
+      accent-color: #c31432;
+    }
+
+    #${CART_BULK_TOOLBAR_ID} {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 12px;
+      margin: 12px 0 16px;
+    }
+
+    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      background: #ffffff;
+      color: #111827;
+    }
+
+    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--ghost:hover:not(:disabled) {
+      filter: brightness(0.97);
+    }
+
+    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--primary {
+      border: 0;
+      background: linear-gradient(90deg, #c31432 0%, #93291e 100%);
+      color: #ffffff;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+
+    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--primary:hover:not(:disabled) {
+      filter: brightness(0.97);
+    }
+
+    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__hint {
+      flex: 1 1 220px;
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.35;
+      color: rgba(17, 24, 39, 0.62);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--ghost {
+      background: #262626;
+      color: #f5f5f5;
+      border-color: rgba(245, 245, 245, 0.12);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__hint {
+      color: rgba(229, 229, 229, 0.65);
     }
 
     .${BID_TOTAL_HINT_CLASS} {
