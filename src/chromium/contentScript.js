@@ -20,6 +20,7 @@ const PREMIUM_HINT_CLASS = 'nellis-premium-hint';
 const TIME_HINT_CLASS = 'nellis-time-hint';
 const PURCHASES_EXPORT_ID = 'nellis-purchases-export';
 const CART_BULK_TOOLBAR_ID = 'nellis-cart-bulk-toolbar';
+const CART_BULK_CHECKOUT_TOOLBAR_ID = 'nellis-cart-bulk-add-checkout-toolbar';
 const DARK_MODE_TOGGLE_CLASS = 'nellis-dark-mode-toggle';
 const DARK_MODE_TOGGLE_ID = 'nellis-dark-mode-toggle';
 const DARK_MODE_HTML_CLASS = 'nellis-dark-mode';
@@ -48,6 +49,7 @@ let purchasesRenderAttempts = 0;
 let cartBulkRouteKey = '';
 let cartBulkRenderAttempts = 0;
 let cartBulkSaveInFlight = false;
+let cartBulkCheckoutInFlight = false;
 let lastKnownUrl = window.location.href;
 const closeTimeCache = new Map();
 
@@ -142,7 +144,7 @@ async function renderPageFeatures() {
   const routeKey = `${window.location.pathname}${window.location.search}`;
   injectStyles();
   renderPurchasesExportButton(routeKey);
-  renderCartBulkSaveUi(routeKey);
+  renderCartBulkUis(routeKey);
   renderDarkModeToggleButtons();
   attachPricePremiumHint();
   attachBidTotalPremiumHint();
@@ -786,6 +788,14 @@ function isCartRowBulkSaveForLaterEligible(row) {
   );
 }
 
+function isCartRowBulkAddToCheckoutEligible(row) {
+  return Boolean(
+    row.querySelector(
+      'button[name="_action"][value="add-to-checkout"], [data-ax="pickups-add-to-cart"]'
+    )
+  );
+}
+
 function needsCartBulkUiRefresh() {
   if (!isNellisCartPage()) {
     return false;
@@ -797,28 +807,54 @@ function needsCartBulkUiRefresh() {
   }
 
   for (const row of allRows) {
-    if (!isCartRowBulkSaveForLaterEligible(row) && row.querySelector('.nellis-cart-bulk-cb')) {
+    const save = isCartRowBulkSaveForLaterEligible(row);
+    const checkout = isCartRowBulkAddToCheckoutEligible(row);
+    if (save && row.querySelector('.nellis-cart-bulk-checkout-cb')) {
+      return true;
+    }
+    if (checkout && row.querySelector('.nellis-cart-bulk-cb')) {
+      return true;
+    }
+    if (!save && row.querySelector('.nellis-cart-bulk-cb')) {
+      return true;
+    }
+    if (!checkout && row.querySelector('.nellis-cart-bulk-checkout-cb')) {
       return true;
     }
   }
 
-  const eligibleRows = Array.from(allRows).filter(isCartRowBulkSaveForLaterEligible);
-  if (!eligibleRows.length) {
-    return Boolean(document.getElementById(CART_BULK_TOOLBAR_ID));
-  }
-
-  if (!document.getElementById(CART_BULK_TOOLBAR_ID)) {
+  const saveEligible = Array.from(allRows).filter(isCartRowBulkSaveForLaterEligible);
+  if (saveEligible.length) {
+    if (!document.getElementById(CART_BULK_TOOLBAR_ID)) {
+      return true;
+    }
+    if (saveEligible.some((row) => !row.querySelector('.nellis-cart-bulk-cb'))) {
+      return true;
+    }
+  } else if (document.getElementById(CART_BULK_TOOLBAR_ID)) {
     return true;
   }
 
-  return eligibleRows.some((row) => !row.querySelector('.nellis-cart-bulk-cb'));
+  const checkoutEligible = Array.from(allRows).filter(isCartRowBulkAddToCheckoutEligible);
+  if (checkoutEligible.length) {
+    if (!document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID)) {
+      return true;
+    }
+    if (checkoutEligible.some((row) => !row.querySelector('.nellis-cart-bulk-checkout-cb'))) {
+      return true;
+    }
+  } else if (document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID)) {
+    return true;
+  }
+
+  return false;
 }
 
-function renderCartBulkSaveUi(routeKey) {
+function renderCartBulkUis(routeKey) {
   if (!isNellisCartPage()) {
     cartBulkRouteKey = '';
     cartBulkRenderAttempts = 0;
-    removeCartBulkUi();
+    removeAllCartBulkUi();
     return;
   }
 
@@ -838,13 +874,28 @@ function renderCartBulkSaveUi(routeKey) {
 
   cartBulkRenderAttempts = 0;
 
+  cleanupCartBulkRowDecorations(allRows);
+  renderCartBulkSaveSection(allRows);
+  renderCartBulkCheckoutSection(allRows);
+}
+
+function cleanupCartBulkRowDecorations(allRows) {
   for (const row of allRows) {
-    if (!isCartRowBulkSaveForLaterEligible(row)) {
+    const save = isCartRowBulkSaveForLaterEligible(row);
+    const checkout = isCartRowBulkAddToCheckoutEligible(row);
+    if (!save) {
       row.querySelector('.nellis-cart-bulk-cb')?.remove();
+    }
+    if (!checkout) {
+      row.querySelector('.nellis-cart-bulk-checkout-cb')?.remove();
+    }
+    if (!save && !checkout) {
       row.classList.remove('nellis-cart-bulk-row');
     }
   }
+}
 
+function renderCartBulkSaveSection(allRows) {
   const eligibleRows = Array.from(allRows).filter(isCartRowBulkSaveForLaterEligible);
   if (!eligibleRows.length) {
     document.getElementById(CART_BULK_TOOLBAR_ID)?.remove();
@@ -887,7 +938,7 @@ function renderCartBulkSaveUi(routeKey) {
     selectAll.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--ghost';
     selectAll.textContent = 'Select all';
     selectAll.addEventListener('click', () => {
-      setAllCartBulkCheckboxes(true);
+      setAllCartBulkSaveCheckboxes(true);
     });
 
     const clearBtn = document.createElement('button');
@@ -895,7 +946,7 @@ function renderCartBulkSaveUi(routeKey) {
     clearBtn.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--ghost';
     clearBtn.textContent = 'Clear selection';
     clearBtn.addEventListener('click', () => {
-      setAllCartBulkCheckboxes(false);
+      setAllCartBulkSaveCheckboxes(false);
     });
 
     const saveBtn = document.createElement('button');
@@ -912,6 +963,73 @@ function renderCartBulkSaveUi(routeKey) {
   }
 
   syncCartBulkToolbar();
+}
+
+function renderCartBulkCheckoutSection(allRows) {
+  const eligibleRows = Array.from(allRows).filter(isCartRowBulkAddToCheckoutEligible);
+  if (!eligibleRows.length) {
+    document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID)?.remove();
+    return;
+  }
+
+  for (const row of eligibleRows) {
+    if (row.querySelector('.nellis-cart-bulk-checkout-cb')) {
+      continue;
+    }
+
+    row.classList.add('nellis-cart-bulk-row');
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'nellis-cart-bulk-checkout-cb';
+    checkbox.setAttribute('aria-label', 'Select item for bulk add to checkout');
+    checkbox.addEventListener('change', () => {
+      syncCartBulkCheckoutToolbar();
+    });
+    row.prepend(checkbox);
+  }
+
+  const anchor = findPickUpBulkToolbarAnchor(eligibleRows[0]);
+  if (!anchor) {
+    return;
+  }
+
+  let toolbar = document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID);
+  if (!toolbar) {
+    toolbar = document.createElement('div');
+    toolbar.id = CART_BULK_CHECKOUT_TOOLBAR_ID;
+    toolbar.className = 'nellis-cart-bulk-toolbar';
+
+    const selectAll = document.createElement('button');
+    selectAll.type = 'button';
+    selectAll.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--ghost';
+    selectAll.textContent = 'Select all';
+    selectAll.addEventListener('click', () => {
+      setAllCartBulkCheckoutCheckboxes(true);
+    });
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--ghost';
+    clearBtn.textContent = 'Clear selection';
+    clearBtn.addEventListener('click', () => {
+      setAllCartBulkCheckoutCheckboxes(false);
+    });
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--primary';
+    addBtn.dataset.role = 'add-checkout';
+    addBtn.addEventListener('click', handleCartBulkAddToCheckout);
+
+    toolbar.append(selectAll, clearBtn, addBtn);
+  }
+
+  if (toolbar.parentElement !== anchor || toolbar !== anchor.firstElementChild) {
+    anchor.insertBefore(toolbar, anchor.firstChild);
+  }
+
+  syncCartBulkCheckoutToolbar();
 }
 
 function findPickUpBulkToolbarAnchor(eligibleRow) {
@@ -935,13 +1053,11 @@ function findPickUpBulkToolbarAnchor(eligibleRow) {
   return null;
 }
 
-function removeCartBulkUi() {
-  const toolbar = document.getElementById(CART_BULK_TOOLBAR_ID);
-  if (toolbar) {
-    toolbar.remove();
-  }
+function removeAllCartBulkUi() {
+  document.getElementById(CART_BULK_TOOLBAR_ID)?.remove();
+  document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID)?.remove();
 
-  for (const checkbox of document.querySelectorAll('.nellis-cart-bulk-cb')) {
+  for (const checkbox of document.querySelectorAll('.nellis-cart-bulk-cb, .nellis-cart-bulk-checkout-cb')) {
     checkbox.remove();
   }
 
@@ -956,7 +1072,13 @@ function getEligibleCartBulkSaveRows() {
   );
 }
 
-function setAllCartBulkCheckboxes(checked) {
+function getEligibleCartBulkCheckoutRows() {
+  return Array.from(document.querySelectorAll('[data-ax="pickups-item-container"]')).filter(
+    isCartRowBulkAddToCheckoutEligible
+  );
+}
+
+function setAllCartBulkSaveCheckboxes(checked) {
   for (const row of getEligibleCartBulkSaveRows()) {
     const checkbox = row.querySelector('.nellis-cart-bulk-cb');
     if (checkbox instanceof HTMLInputElement) {
@@ -964,6 +1086,16 @@ function setAllCartBulkCheckboxes(checked) {
     }
   }
   syncCartBulkToolbar();
+}
+
+function setAllCartBulkCheckoutCheckboxes(checked) {
+  for (const row of getEligibleCartBulkCheckoutRows()) {
+    const checkbox = row.querySelector('.nellis-cart-bulk-checkout-cb');
+    if (checkbox instanceof HTMLInputElement) {
+      checkbox.checked = checked;
+    }
+  }
+  syncCartBulkCheckoutToolbar();
 }
 
 function syncCartBulkToolbar() {
@@ -989,7 +1121,30 @@ function syncCartBulkToolbar() {
       : `Save selected for later (${selectedCount})`;
 }
 
-function buildCartSaveForLaterBody(form) {
+function syncCartBulkCheckoutToolbar() {
+  const toolbar = document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID);
+  if (!toolbar) {
+    return;
+  }
+
+  const addBtn = toolbar.querySelector('[data-role="add-checkout"]');
+  if (!(addBtn instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const selectedCount = getEligibleCartBulkCheckoutRows().filter((row) => {
+    const checkbox = row.querySelector('.nellis-cart-bulk-checkout-cb');
+    return checkbox instanceof HTMLInputElement && checkbox.checked;
+  }).length;
+
+  addBtn.disabled = selectedCount === 0 || cartBulkCheckoutInFlight;
+  addBtn.textContent =
+    selectedCount === 0
+      ? 'Add selected to checkout'
+      : `Add selected to checkout (${selectedCount})`;
+}
+
+function buildCartFormPostBody(form, actionValue) {
   const data = new URLSearchParams();
 
   for (const element of form.elements) {
@@ -1021,11 +1176,11 @@ function buildCartSaveForLaterBody(form) {
     data.append(element.name, element.value);
   }
 
-  data.set('_action', 'save-for-later');
+  data.set('_action', actionValue);
   return data;
 }
 
-async function postSaveForLaterForRow(row) {
+async function postCartPickupsFormForRow(row, actionValue, errorLabel) {
   const form = row.querySelector('form[action*="/dashboard/cart"]');
   if (!(form instanceof HTMLFormElement)) {
     throw new Error('Cart form not found for a selected row.');
@@ -1037,7 +1192,7 @@ async function postSaveForLaterForRow(row) {
   }
 
   const actionUrl = new URL(action, window.location.origin).toString();
-  const body = buildCartSaveForLaterBody(form);
+  const body = buildCartFormPostBody(form, actionValue);
 
   const response = await fetch(actionUrl, {
     method: 'POST',
@@ -1051,7 +1206,7 @@ async function postSaveForLaterForRow(row) {
   });
 
   if (!response.ok) {
-    throw new Error(`Save for later failed with status ${response.status}.`);
+    throw new Error(`${errorLabel} failed with status ${response.status}.`);
   }
 }
 
@@ -1080,7 +1235,7 @@ async function handleCartBulkSaveForLater() {
   try {
     let index = 0;
     for (const row of selectedRows) {
-      await postSaveForLaterForRow(row);
+      await postCartPickupsFormForRow(row, 'save-for-later', 'Save for later');
       index += 1;
       if (saveBtn instanceof HTMLButtonElement) {
         saveBtn.textContent = `Saving… (${index}/${selectedRows.length})`;
@@ -1093,6 +1248,47 @@ async function handleCartBulkSaveForLater() {
   } finally {
     cartBulkSaveInFlight = false;
     syncCartBulkToolbar();
+  }
+}
+
+async function handleCartBulkAddToCheckout() {
+  if (cartBulkCheckoutInFlight) {
+    return;
+  }
+
+  const selectedRows = getEligibleCartBulkCheckoutRows().filter((row) => {
+    const checkbox = row.querySelector('.nellis-cart-bulk-checkout-cb');
+    return checkbox instanceof HTMLInputElement && checkbox.checked;
+  });
+
+  if (!selectedRows.length) {
+    return;
+  }
+
+  cartBulkCheckoutInFlight = true;
+  syncCartBulkCheckoutToolbar();
+
+  const addBtn = document.querySelector(`#${CART_BULK_CHECKOUT_TOOLBAR_ID} [data-role="add-checkout"]`);
+  if (addBtn instanceof HTMLButtonElement) {
+    addBtn.textContent = `Adding… (0/${selectedRows.length})`;
+  }
+
+  try {
+    let index = 0;
+    for (const row of selectedRows) {
+      await postCartPickupsFormForRow(row, 'add-to-checkout', 'Add to checkout');
+      index += 1;
+      if (addBtn instanceof HTMLButtonElement) {
+        addBtn.textContent = `Adding… (${index}/${selectedRows.length})`;
+      }
+    }
+    window.location.reload();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Add to checkout failed.';
+    window.alert(message);
+  } finally {
+    cartBulkCheckoutInFlight = false;
+    syncCartBulkCheckoutToolbar();
   }
 }
 
@@ -1648,7 +1844,8 @@ function injectStyles() {
       padding-left: 40px;
     }
 
-    .nellis-cart-bulk-cb {
+    .nellis-cart-bulk-cb,
+    .nellis-cart-bulk-checkout-cb {
       position: absolute;
       left: 12px;
       top: 14px;
@@ -1660,7 +1857,8 @@ function injectStyles() {
       accent-color: #c31432;
     }
 
-    #${CART_BULK_TOOLBAR_ID} {
+    #${CART_BULK_TOOLBAR_ID},
+    #${CART_BULK_CHECKOUT_TOOLBAR_ID} {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
@@ -1669,7 +1867,8 @@ function injectStyles() {
       width: 100%;
     }
 
-    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn {
+    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn,
+    #${CART_BULK_CHECKOUT_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -1684,11 +1883,13 @@ function injectStyles() {
       color: #111827;
     }
 
-    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--ghost:hover:not(:disabled) {
+    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--ghost:hover:not(:disabled),
+    #${CART_BULK_CHECKOUT_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--ghost:hover:not(:disabled) {
       filter: brightness(0.97);
     }
 
-    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--primary {
+    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--primary,
+    #${CART_BULK_CHECKOUT_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--primary {
       border: 0;
       background: linear-gradient(90deg, #c31432 0%, #93291e 100%);
       color: #ffffff;
@@ -1696,16 +1897,19 @@ function injectStyles() {
       letter-spacing: 0.02em;
     }
 
-    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--primary:hover:not(:disabled) {
+    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--primary:hover:not(:disabled),
+    #${CART_BULK_CHECKOUT_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--primary:hover:not(:disabled) {
       filter: brightness(0.97);
     }
 
-    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn:disabled {
+    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn:disabled,
+    #${CART_BULK_CHECKOUT_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn:disabled {
       cursor: not-allowed;
       opacity: 0.55;
     }
 
-    html.${DARK_MODE_HTML_CLASS} #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--ghost {
+    html.${DARK_MODE_HTML_CLASS} #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--ghost,
+    html.${DARK_MODE_HTML_CLASS} #${CART_BULK_CHECKOUT_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--ghost {
       background: #262626;
       color: #f5f5f5;
       border-color: rgba(245, 245, 245, 0.12);
