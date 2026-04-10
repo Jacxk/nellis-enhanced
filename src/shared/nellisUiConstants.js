@@ -19,5 +19,7 @@ export const RENDER_DEBOUNCE_MS = 250;
 export const MAX_RENDER_RETRIES = 20;
 export const RENDER_RETRY_MS = 400;
 export const PURCHASES_PAGE_SIZE = 30;
+export const AUCTION_LIST_PHOTO_WRAP_CLASS = 'nellis-auction-list-photo-wrap';
+export const AUCTION_LIST_PHOTO_BAR_CLASS = 'nellis-auction-list-photo-nav';
 export const ROUTE_WATCH_INTERVAL_MS = 500;
 export const BUYER_PREMIUM_RATE = 0.15;

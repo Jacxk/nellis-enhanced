@@ -36,9 +36,22 @@ async function bundle() {
   // Determine entry point and manifest
   const manifestSrc = join(browserSrcDir, 'manifest.json');
   const contentScriptSrc = join(browserSrcDir, 'contentScript.js');
+  const pageWorldFetchBridgeSrc = join(browserSrcDir, 'pageWorldFetchBridge.js');
   const backgroundScriptSrc = join(browserSrcDir, 'background.js');
 
   await Promise.all([
+    build({
+      entryPoints: [pageWorldFetchBridgeSrc],
+      bundle: true,
+      outfile: join(DIST_DIR, 'pageWorldFetchBridge.bundle.js'),
+      format: 'iife',
+      target: ['chrome100'],
+      minify: true,
+      sourcemap: false,
+      define: {
+        'process.env.NODE_ENV': '"production"',
+      },
+    }),
     build({
       entryPoints: [contentScriptSrc],
       bundle: true,

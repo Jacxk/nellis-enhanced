@@ -1,4 +1,14 @@
 import {
+  mergeAuctionListPhotoPayload,
+  mergeNellisItemPagePhotoPayload,
+  mergeProductsPhotoPayload,
+  parseNellisItemIdFromHref,
+  parseNellisItemIdFromPathname,
+  shouldParseNellisAuctionRemixDataKey,
+  shouldParseNellisSearchRemixDataKey,
+  shouldParseNellisSpotlightRemixDataKey,
+} from '../shared/nellisAuctionListPhotos.js';
+import {
   extractNellisItem,
   findNellisPriceTargets,
   findNellisTimeTargets,
@@ -6,7 +16,10 @@ import {
   hasNellisPriceCards,
   isNellisAuctionSite,
   isNellisCartPage,
+  isNellisDashboardAuctionListPage,
   isNellisItemPage,
+  isNellisSearchPage,
+  isNellisSpotlightPage,
   isNellisOnlyItemTitle,
   parseCurrencyAmount,
 } from '../shared/nellisPage.js';
@@ -15,6 +28,8 @@ import { getAmazonItemFromHtml } from '../shared/amazonSource.js';
 import { parseAmazonProductPage } from '../shared/productMatcher.js';
 
 import {
+  AUCTION_LIST_PHOTO_BAR_CLASS,
+  AUCTION_LIST_PHOTO_WRAP_CLASS,
   BID_TOTAL_HINT_CLASS,
   BUYER_PREMIUM_RATE,
   CARD_ID,
@@ -53,8 +68,73 @@ let cartBulkSaveInFlight = false;
 let cartBulkCheckoutInFlight = false;
 let lastKnownUrl = window.location.href;
 const closeTimeCache = new Map();
+const auctionListPhotosByItemId = new Map();
 
-init();
+/**
+ * Remix `fetch` runs in the page main world; the isolated content script cannot patch it.
+ * `pageWorldFetchBridge.bundle.js` (MAIN world, document_start) patches `fetch` and dispatches
+ * `nellis-enhanced-remix` on `document` with `{ dataKey, json }`.
+ */
+function shouldParseRemixLoaderDataKey(dataKey) {
+  if (shouldParseNellisAuctionRemixDataKey(dataKey)) {
+    return true;
+  }
+  if (shouldParseNellisSearchRemixDataKey(dataKey)) {
+    return true;
+  }
+  if (shouldParseNellisSpotlightRemixDataKey(dataKey)) {
+    return true;
+  }
+  if (isNellisItemPage()) {
+    return true;
+  }
+  if (isNellisDashboardAuctionListPage()) {
+    return true;
+  }
+  if (isNellisSearchPage()) {
+    return true;
+  }
+  if (isNellisSpotlightPage()) {
+    return true;
+  }
+  return false;
+}
+
+function handleRemixLoaderPayload(json, dataKey) {
+  if (!shouldParseRemixLoaderDataKey(dataKey)) {
+    return;
+  }
+
+  let changed = mergeAuctionListPhotoPayload(json, auctionListPhotosByItemId);
+  changed = mergeProductsPhotoPayload(json, auctionListPhotosByItemId) || changed;
+  if (isNellisItemPage()) {
+    const pageId = parseNellisItemIdFromPathname(window.location.pathname);
+    if (pageId) {
+      changed = mergeNellisItemPagePhotoPayload(json, pageId, auctionListPhotosByItemId) || changed;
+    }
+  }
+  if (changed) {
+    scheduleRender();
+  }
+}
+
+document.addEventListener('nellis-enhanced-remix', (event) => {
+  const detail = event?.detail;
+  if (!detail || detail.json === undefined || !detail.dataKey) {
+    return;
+  }
+  try {
+    handleRemixLoaderPayload(detail.json, detail.dataKey);
+  } catch (err) {
+    console.warn('[NellisEnhanced] remix loader handler error:', err);
+  }
+});
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init, { once: true });
+} else {
+  init();
+}
 
 function init() {
   injectStyles();
@@ -106,6 +186,7 @@ function installRouteListeners() {
       (isNellisCartPage() && needsCartBulkUiRefresh()) ||
       (isNellisItemPage() && !document.getElementById(CARD_ID)) ||
       (isNellisAuctionSite() && needsDarkModeToggleRender()) ||
+      needsNellisItemImageCarouselRefresh() ||
       hasTooltipRefreshTargets() ||
       hasBidTotalHintRefreshTargets()
     ) {
@@ -148,6 +229,11 @@ function installRouteListeners() {
       return;
     }
 
+    if (needsNellisItemImageCarouselRefresh()) {
+      scheduleRender();
+      return;
+    }
+
     if (hasBidTotalHintRefreshTargets()) {
       scheduleRender();
     }
@@ -165,6 +251,7 @@ async function renderPageFeatures() {
   applyStoredDarkMode();
   renderPurchasesExportButton(routeKey);
   renderCartBulkUis(routeKey);
+  renderNellisItemImageCarousels(routeKey);
   renderDarkModeToggleButtons();
   attachPricePremiumHint();
   attachBidTotalPremiumHint();
@@ -826,6 +913,122 @@ function isPurchasesPage(locationObject = window.location) {
 
 function isCartPage(locationObject = window.location) {
   return locationObject.pathname === '/dashboard/cart' || locationObject.pathname.startsWith('/dashboard/cart/');
+}
+
+function needsNellisItemImageCarouselRefresh() {
+  if (!isNellisAuctionSite()) {
+    return false;
+  }
+
+  for (const anchor of document.querySelectorAll(
+    'a[data-ax="item-card-image-link"][href*="/p/"]'
+  )) {
+    const itemId = parseNellisItemIdFromHref(anchor.getAttribute('href'));
+    if (!itemId) {
+      continue;
+    }
+    const photos = auctionListPhotosByItemId.get(itemId);
+    if (!photos || photos.length < 2) {
+      continue;
+    }
+    const img = anchor.querySelector('img[src]');
+    if (img && !img.closest(`.${AUCTION_LIST_PHOTO_WRAP_CLASS}`)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function attachNellisPhotoCarouselToAnchor(anchor, itemId, routeKey) {
+  const photos = auctionListPhotosByItemId.get(itemId);
+  if (!photos || photos.length < 2) {
+    return;
+  }
+
+  const img = anchor.querySelector('img[src]');
+  if (!img || img.closest(`.${AUCTION_LIST_PHOTO_WRAP_CLASS}`)) {
+    return;
+  }
+
+  const wrap = document.createElement('span');
+  wrap.className = AUCTION_LIST_PHOTO_WRAP_CLASS;
+  wrap.dataset.nellisItemId = itemId;
+  wrap.dataset.routeKey = routeKey;
+
+  const bar = document.createElement('span');
+  bar.className = AUCTION_LIST_PHOTO_BAR_CLASS;
+  bar.innerHTML = `
+      <button type="button" data-nellis-photo-prev aria-label="Previous photo">‹</button>
+      <span data-nellis-photo-count></span>
+      <button type="button" data-nellis-photo-next aria-label="Next photo">›</button>
+    `;
+
+  img.replaceWith(wrap);
+  wrap.appendChild(img);
+  wrap.appendChild(bar);
+
+  const prevBtn = bar.querySelector('[data-nellis-photo-prev]');
+  const nextBtn = bar.querySelector('[data-nellis-photo-next]');
+  const countEl = bar.querySelector('[data-nellis-photo-count]');
+
+  let index = 0;
+  const syncFromMap = () => {
+    const list = auctionListPhotosByItemId.get(itemId) || photos;
+    if (list.length < 2) {
+      return list;
+    }
+    index = ((index % list.length) + list.length) % list.length;
+    const url = list[index];
+    if (url && img instanceof HTMLImageElement) {
+      img.src = url;
+    }
+    if (countEl) {
+      countEl.textContent = `${index + 1} / ${list.length}`;
+    }
+    return list;
+  };
+
+  syncFromMap();
+
+  const step = (delta) => {
+    const list = auctionListPhotosByItemId.get(itemId) || photos;
+    if (list.length < 2) {
+      return;
+    }
+    index = (index + delta + list.length) % list.length;
+    syncFromMap();
+  };
+
+  const stopNav = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  prevBtn?.addEventListener('click', (event) => {
+    stopNav(event);
+    step(-1);
+  });
+  nextBtn?.addEventListener('click', (event) => {
+    stopNav(event);
+    step(1);
+  });
+}
+
+function renderNellisItemImageCarousels(routeKey) {
+  if (!isNellisAuctionSite()) {
+    return;
+  }
+
+  for (const anchor of document.querySelectorAll(
+    'a[data-ax="item-card-image-link"][href*="/p/"]'
+  )) {
+    const itemId = parseNellisItemIdFromHref(anchor.getAttribute('href'));
+    if (!itemId) {
+      continue;
+    }
+    attachNellisPhotoCarouselToAnchor(anchor, itemId, routeKey);
+  }
 }
 
 function renderPurchasesExportButton(routeKey) {
