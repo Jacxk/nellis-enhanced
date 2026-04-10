@@ -344,9 +344,9 @@ export function injectStyles() {
       right: -7px;
       z-index: 2;
       box-sizing: border-box;
-      min-width: 14px;
-      height: 14px;
-      padding: 0 3px;
+      min-width: 1.25rem;
+      min-height: 1.25rem;
+      padding: 4px 7px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
