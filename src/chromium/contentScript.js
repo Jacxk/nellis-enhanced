@@ -868,12 +868,15 @@ function renderCartBulkSaveUi(routeKey) {
     row.prepend(checkbox);
   }
 
-  const anchor = findCartBulkAnchor();
+  const anchor = findPickUpBulkToolbarAnchor(eligibleRows[0]);
   if (!anchor) {
     return;
   }
 
   let toolbar = document.getElementById(CART_BULK_TOOLBAR_ID);
+  if (toolbar) {
+    toolbar.querySelector('[data-role="hint"]')?.remove();
+  }
   if (!toolbar) {
     toolbar = document.createElement('div');
     toolbar.id = CART_BULK_TOOLBAR_ID;
@@ -901,31 +904,35 @@ function renderCartBulkSaveUi(routeKey) {
     saveBtn.dataset.role = 'save';
     saveBtn.addEventListener('click', handleCartBulkSaveForLater);
 
-    const hint = document.createElement('p');
-    hint.className = 'nellis-cart-bulk-toolbar__hint';
-    hint.dataset.role = 'hint';
-    hint.textContent =
-      'Each selected item is saved with the same request the site uses for “Save for later” (one request per item).';
-
-    toolbar.append(selectAll, clearBtn, saveBtn, hint);
+    toolbar.append(selectAll, clearBtn, saveBtn);
   }
 
-  if (toolbar.parentElement !== anchor) {
-    anchor.appendChild(toolbar);
+  if (toolbar.parentElement !== anchor || toolbar !== anchor.firstElementChild) {
+    anchor.insertBefore(toolbar, anchor.firstChild);
   }
 
   syncCartBulkToolbar();
 }
 
-function findCartBulkAnchor(root = document) {
-  const headings = Array.from(root.querySelectorAll('h1, h2, h3, [role="heading"]'));
-  const cartHeading = headings.find((node) => node.textContent?.trim().toLowerCase().includes('cart'));
-
-  if (cartHeading?.parentElement) {
-    return cartHeading.parentElement;
+function findPickUpBulkToolbarAnchor(eligibleRow) {
+  if (!(eligibleRow instanceof Element)) {
+    return null;
   }
 
-  return root.querySelector('main') || null;
+  let node = eligibleRow.parentElement;
+  while (node && node !== document.body) {
+    if (
+      node instanceof HTMLDivElement &&
+      node.classList.contains('flex') &&
+      node.classList.contains('flex-col') &&
+      node.classList.contains('gap-2.5')
+    ) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+
+  return null;
 }
 
 function removeCartBulkUi() {
@@ -966,7 +973,6 @@ function syncCartBulkToolbar() {
   }
 
   const saveBtn = toolbar.querySelector('[data-role="save"]');
-  const hint = toolbar.querySelector('[data-role="hint"]');
   if (!(saveBtn instanceof HTMLButtonElement)) {
     return;
   }
@@ -981,10 +987,6 @@ function syncCartBulkToolbar() {
     selectedCount === 0
       ? 'Save selected for later'
       : `Save selected for later (${selectedCount})`;
-
-  if (hint instanceof HTMLElement) {
-    hint.hidden = cartBulkSaveInFlight;
-  }
 }
 
 function buildCartSaveForLaterBody(form) {
@@ -1663,7 +1665,8 @@ function injectStyles() {
       flex-wrap: wrap;
       align-items: center;
       gap: 10px 12px;
-      margin: 12px 0 16px;
+      margin: 0 0 10px;
+      width: 100%;
     }
 
     #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn {
@@ -1702,22 +1705,10 @@ function injectStyles() {
       opacity: 0.55;
     }
 
-    #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__hint {
-      flex: 1 1 220px;
-      margin: 0;
-      font-size: 12px;
-      line-height: 1.35;
-      color: rgba(17, 24, 39, 0.62);
-    }
-
     html.${DARK_MODE_HTML_CLASS} #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn--ghost {
       background: #262626;
       color: #f5f5f5;
       border-color: rgba(245, 245, 245, 0.12);
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__hint {
-      color: rgba(229, 229, 229, 0.65);
     }
 
     .${BID_TOTAL_HINT_CLASS} {
