@@ -1,5 +1,7 @@
 import {
+  formatNellisCloseTimeTooltip,
   mergeAuctionListPhotoPayload,
+  mergeCloseTimeFromRemixPayload,
   mergeNellisItemPagePhotoPayload,
   mergeProductsPhotoPayload,
   parseNellisItemIdFromHref,
@@ -67,7 +69,8 @@ let cartBulkRenderAttempts = 0;
 let cartBulkSaveInFlight = false;
 let cartBulkCheckoutInFlight = false;
 let lastKnownUrl = window.location.href;
-const closeTimeCache = new Map();
+/** Item id → formatted local time for “time left” hover (from Remix loaders or HTML fallback). */
+const closeTimeByItemId = new Map();
 const auctionListPhotosByItemId = new Map();
 
 /**
@@ -107,6 +110,7 @@ function handleRemixLoaderPayload(json, dataKey) {
 
   let changed = mergeAuctionListPhotoPayload(json, auctionListPhotosByItemId);
   changed = mergeProductsPhotoPayload(json, auctionListPhotosByItemId) || changed;
+  changed = mergeCloseTimeFromRemixPayload(json, closeTimeByItemId) || changed;
   if (isNellisItemPage()) {
     const pageId = parseNellisItemIdFromPathname(window.location.pathname);
     if (pageId) {
@@ -708,9 +712,11 @@ function attachTimeEndHint() {
   for (const target of targets) {
     activeTargets.add(target.container);
     target.container.classList.add(TIME_HINT_CLASS);
-    if (!target.container.hasAttribute('data-time-tooltip')) {
-      target.container.setAttribute('data-time-tooltip', 'Loading...');
-    }
+    const itemUrl = getItemUrlForTimeTarget(target.container);
+    const itemId = itemUrl ? parseNellisItemIdFromHref(itemUrl) : null;
+    const tip =
+      itemId && closeTimeByItemId.has(itemId) ? closeTimeByItemId.get(itemId) || '' : '';
+    target.container.setAttribute('data-time-tooltip', tip);
 
     if (target.container.dataset.timeHintBound !== 'true') {
       target.container.addEventListener('mouseenter', handleTimeHintHover);
@@ -763,8 +769,9 @@ async function handleTimeHintHover(event) {
     return;
   }
 
-  if (closeTimeCache.has(itemUrl)) {
-    container.setAttribute('data-time-tooltip', closeTimeCache.get(itemUrl) || '');
+  const itemId = parseNellisItemIdFromHref(itemUrl);
+  if (itemId && closeTimeByItemId.has(itemId)) {
+    container.setAttribute('data-time-tooltip', closeTimeByItemId.get(itemId) || '');
     return;
   }
 
@@ -785,7 +792,9 @@ async function handleTimeHintHover(event) {
 
     const html = await response.text();
     const tooltipText = extractCloseTimeTooltipFromHtml(html);
-    closeTimeCache.set(itemUrl, tooltipText);
+    if (itemId && tooltipText) {
+      closeTimeByItemId.set(itemId, tooltipText);
+    }
     container.setAttribute('data-time-tooltip', tooltipText);
   } catch (error) {
     console.error('[NellisCompare] Failed to resolve exact close time:', error);
@@ -822,10 +831,7 @@ function extractCloseTimeTooltipFromHtml(html) {
     return '';
   }
 
-  return new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(closeTime);
+  return formatNellisCloseTimeTooltip(closeTime);
 }
 
 function hasTooltipRefreshTargets() {
