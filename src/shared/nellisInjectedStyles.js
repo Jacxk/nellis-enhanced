@@ -9,7 +9,7 @@ import {
   PREMIUM_HINT_CLASS,
   STYLE_ID,
   TIME_HINT_CLASS,
-} from './contentScriptConstants.js';
+} from './nellisUiConstants.js';
 
 export function injectStyles() {
   if (document.getElementById(STYLE_ID)) {

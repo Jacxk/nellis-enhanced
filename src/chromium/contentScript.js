@@ -35,8 +35,8 @@ import {
   RENDER_RETRY_MS,
   ROUTE_WATCH_INTERVAL_MS,
   TIME_HINT_CLASS,
-} from './contentScriptConstants.js';
-import { injectStyles } from './contentScriptStyles.js';
+} from '../shared/nellisUiConstants.js';
+import { injectStyles } from '../shared/nellisInjectedStyles.js';
 
 let activeRouteKey = '';
 let renderTimer = 0;
