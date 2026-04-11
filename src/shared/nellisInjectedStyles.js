@@ -569,6 +569,23 @@ export function injectStyles() {
       background-color: #262626 !important;
     }
 
+    /* Scroll-to-top FAB: same neutral remap as page chrome — lift like dark-mode toggle */
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="scroll-to-top"] {
+      background-color: #404040 !important;
+      border: 1px solid rgba(148, 163, 184, 0.35) !important;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="scroll-to-top"]:hover {
+      background-color: #525252 !important;
+      border-color: rgba(203, 213, 225, 0.35) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="scroll-to-top"]:focus-visible {
+      outline: 2px solid rgba(148, 163, 184, 0.65) !important;
+      outline-offset: 2px !important;
+    }
+
     html.${DARK_MODE_HTML_CLASS} [class*="bg-neutral-800"],
     html.${DARK_MODE_HTML_CLASS} [class*="bg-neutral-900"] {
       background-color: #171717 !important;
@@ -688,6 +705,11 @@ export function injectStyles() {
     html.${DARK_MODE_HTML_CLASS} [class*="fill-secondary"],
     html.${DARK_MODE_HTML_CLASS} [class*="fill-black"] {
       fill: #d4d4d4 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="scroll-to-top"] [class*="fill-neutral-900"],
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="scroll-to-top"] [class*="fill-neutral-800"] {
+      fill: #f8fafc !important;
     }
 
     /*
@@ -861,6 +883,24 @@ export function injectStyles() {
     html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"][class*="shadow"],
     html.${DARK_MODE_HTML_CLASS} [data-ax*="card"][class*="bg-emerald-200"] {
       background-color: #065f46 !important;
+      color: #ecfdf5 !important;
+    }
+
+    /* Active auctions list: WINNING row is bg-emerald-200 only (no rounded on the strip) */
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"] [class*="bg-emerald-200"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"] [class*="bg-emerald-200"] {
+      background-color: #065f46 !important;
+      color: #ecfdf5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"] [class*="bg-emerald-200"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"] [class*="bg-emerald-200"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"] [class*="bg-emerald-200"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"] [class*="bg-emerald-200"] [class*="text-gray-600"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"] [class*="bg-emerald-200"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"] [class*="bg-emerald-200"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"] [class*="bg-emerald-200"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"] [class*="bg-emerald-200"] [class*="text-gray-600"] {
       color: #ecfdf5 !important;
     }
 
@@ -1128,12 +1168,56 @@ export function injectStyles() {
       fill: #f87171 !important;
     }
 
+    /* Cart / loader: fetch error card (CSS module — stays white otherwise) */
+    html.${DARK_MODE_HTML_CLASS} [class*="__fetch-error-container"] {
+      background-color: #1a1a1a !important;
+      color: #d4d4d4 !important;
+      border: 1px solid #404040 !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__fetch-error-container"] > div {
+      color: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__fetch-error-container"] [class*="__fetch-error-title"] {
+      color: #fafafa !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__fetch-error-container"] [class*="__fetch-error-subtitle"] {
+      color: #a3a3a3 !important;
+    }
+
     /* Receipts + cart items: use a "card" surface, not page surface */
     html.${DARK_MODE_HTML_CLASS} [class~="bg-white"][class*="rounded-itemCard"],
     html.${DARK_MODE_HTML_CLASS} [data-ax="pickups-item-container"][class~="bg-white"],
     html.${DARK_MODE_HTML_CLASS} [data-ax="pickups-item-container"][class*="bg-white"] {
       background-color: #262626 !important;
       border-color: rgba(82, 82, 82, 0.55) !important;
+    }
+
+    /* Pick ups checkout: summary column is bg-white remapped to same as body — restore a card surface */
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-xl"][class*="bg-white"]:has([data-ax="pickups-proceed-to-checkout-form"]) {
+      background-color: #262626 !important;
+      border: 1px solid rgba(82, 82, 82, 0.55) !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-xl"][class*="bg-white"]:has([data-ax="pickups-proceed-to-checkout-form"]) h3 {
+      color: #fafafa !important;
+    }
+
+    /* Pick ups flow: global bg-secondary → flat gray kills CTA; restore Nellis gradient */
+    html.${DARK_MODE_HTML_CLASS} [data-ax="pickups-proceed-to-checkout-form"] button[class~="bg-secondary"]:not(:disabled),
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="pickups-remove-from-cart"][class~="bg-secondary"]:not(:disabled) {
+      background-color: #c31432 !important;
+      background-image: linear-gradient(90deg, #c31432 0%, #93291e 100%) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax="pickups-proceed-to-checkout-form"] button[class~="bg-secondary"]:not(:disabled):hover,
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="pickups-remove-from-cart"][class~="bg-secondary"]:not(:disabled):hover {
+      background-color: #a3122a !important;
+      background-image: linear-gradient(90deg, #a3122a 0%, #7d2418 100%) !important;
     }
 
     /* Dashboard cards that are visually "cards" but can be transparent (e.g. Cart items, Receipts) */
