@@ -11,6 +11,7 @@ import {
   PREMIUM_HINT_CLASS,
   STYLE_ID,
   TIME_HINT_CLASS,
+  WATCHLIST_COUNT_CLASS,
 } from './nellisUiConstants.js';
 
 export function injectStyles() {
@@ -324,6 +325,41 @@ export function injectStyles() {
       width: 100%;
       height: 100%;
       object-fit: contain;
+    }
+
+    form[data-ax="item-card-watchlist-form"],
+    form[data-ax="product-page-watchlist-form"] {
+      overflow: visible;
+    }
+
+    form[data-ax="item-card-watchlist-form"] button:has(.${WATCHLIST_COUNT_CLASS}),
+    form[data-ax="product-page-watchlist-form"] button:has(.${WATCHLIST_COUNT_CLASS}) {
+      position: relative;
+      overflow: visible;
+    }
+
+    .${WATCHLIST_COUNT_CLASS} {
+      position: absolute;
+      top: -7px;
+      right: -7px;
+      z-index: 2;
+      box-sizing: border-box;
+      min-width: 1.25rem;
+      min-height: 1.25rem;
+      padding: 4px 7px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      color: #fafafa;
+      background: rgba(15, 23, 42, 0.88);
+      border-radius: 9999px;
+      pointer-events: none;
+      user-select: none;
+      box-shadow: 0 2px 5px rgba(15, 23, 42, 0.35);
     }
 
     [data-ax="pickups-item-container"].nellis-cart-bulk-row {
@@ -1099,6 +1135,12 @@ export function injectStyles() {
 
     html.${DARK_MODE_HTML_CLASS} .${AUCTION_LIST_PHOTO_BAR_CLASS} button:hover {
       background: rgba(255, 255, 255, 0.2);
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .${WATCHLIST_COUNT_CLASS} {
+      color: #fafafa;
+      background: rgba(23, 23, 23, 0.92);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
     }
 
     @media (max-width: 720px) {

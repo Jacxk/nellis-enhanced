@@ -5,6 +5,7 @@
  * - Search / saved-searches: `products[].photos[]` or `products[].product.photos[]`
  * - Item pages: `item` / `listing` / loader-shaped objects with `photos` for the current product id
  * - Close times: same loaders often include `closeTime` (Remix `Date` shape or ISO) per item row
+ * - Watchlist: `watchlistCount` on list/product rows (number of users who saved the item)
  */
 
 const ITEM_PATH_RE = /^\/p\/[^/]+\/(\d+)\/?$/;
@@ -456,6 +457,85 @@ export function mergeCloseTimeFromRemixPayload(payload, intoMap) {
       const text = formatNellisCloseTimeTooltip(closeDate);
       if (intoMap.get(id) !== text) {
         intoMap.set(id, text);
+        changed = true;
+      }
+    }
+
+    for (const v of Object.values(node)) {
+      if (v && typeof v === 'object') {
+        walk(v, depth + 1);
+      }
+    }
+  }
+
+  walk(payload, 0);
+  return changed;
+}
+
+function parseWatchlistCount(raw) {
+  if (raw == null || raw === '') {
+    return null;
+  }
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw >= 0) {
+    return Math.floor(raw);
+  }
+  if (typeof raw === 'string' && /^\d+$/.test(raw.trim())) {
+    return Number.parseInt(raw, 10);
+  }
+  return null;
+}
+
+function pickWatchlistCountFromRecord(record) {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+  const candidates = [
+    record.watchlistCount,
+    record.item?.watchlistCount,
+    record.product?.watchlistCount,
+  ];
+  for (const c of candidates) {
+    const n = parseWatchlistCount(c);
+    if (n !== null) {
+      return n;
+    }
+  }
+  return null;
+}
+
+/**
+ * Walks Remix loader JSON and merges watchlist viewer counts into `intoMap` keyed by Nellis item / product id.
+ * @returns {boolean} true if the map changed
+ */
+export function mergeWatchlistCountFromRemixPayload(payload, intoMap) {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+
+  let changed = false;
+  const seen = new WeakSet();
+
+  function walk(node, depth) {
+    if (depth > 14 || !node || typeof node !== 'object') {
+      return;
+    }
+    if (seen.has(node)) {
+      return;
+    }
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      for (const el of node) {
+        walk(el, depth + 1);
+      }
+      return;
+    }
+
+    const id = resolveRecordItemId(node);
+    const wc = pickWatchlistCountFromRecord(node);
+    if (id && wc !== null) {
+      if (intoMap.get(id) !== wc) {
+        intoMap.set(id, wc);
         changed = true;
       }
     }

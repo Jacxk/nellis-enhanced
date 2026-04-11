@@ -4,6 +4,7 @@ import {
   mergeCloseTimeFromRemixPayload,
   mergeNellisItemPagePhotoPayload,
   mergeProductsPhotoPayload,
+  mergeWatchlistCountFromRemixPayload,
   parseNellisItemIdFromHref,
   parseNellisItemIdFromPathname,
   shouldParseNellisAuctionRemixDataKey,
@@ -52,6 +53,7 @@ import {
   RENDER_RETRY_MS,
   ROUTE_WATCH_INTERVAL_MS,
   TIME_HINT_CLASS,
+  WATCHLIST_COUNT_CLASS,
 } from '../shared/nellisUiConstants.js';
 import { injectStyles } from '../shared/nellisInjectedStyles.js';
 
@@ -71,6 +73,7 @@ let cartBulkCheckoutInFlight = false;
 let lastKnownUrl = window.location.href;
 /** Item id → formatted local time for “time left” hover (from Remix loaders or HTML fallback). */
 const closeTimeByItemId = new Map();
+const watchlistCountByItemId = new Map();
 const auctionListPhotosByItemId = new Map();
 
 /**
@@ -111,6 +114,7 @@ function handleRemixLoaderPayload(json, dataKey) {
   let changed = mergeAuctionListPhotoPayload(json, auctionListPhotosByItemId);
   changed = mergeProductsPhotoPayload(json, auctionListPhotosByItemId) || changed;
   changed = mergeCloseTimeFromRemixPayload(json, closeTimeByItemId) || changed;
+  changed = mergeWatchlistCountFromRemixPayload(json, watchlistCountByItemId) || changed;
   if (isNellisItemPage()) {
     const pageId = parseNellisItemIdFromPathname(window.location.pathname);
     if (pageId) {
@@ -191,6 +195,7 @@ function installRouteListeners() {
       (isNellisItemPage() && !document.getElementById(CARD_ID)) ||
       (isNellisAuctionSite() && needsDarkModeToggleRender()) ||
       needsNellisItemImageCarouselRefresh() ||
+      needsWatchlistCountRefresh() ||
       hasTooltipRefreshTargets() ||
       hasBidTotalHintRefreshTargets()
     ) {
@@ -238,6 +243,11 @@ function installRouteListeners() {
       return;
     }
 
+    if (needsWatchlistCountRefresh()) {
+      scheduleRender();
+      return;
+    }
+
     if (hasBidTotalHintRefreshTargets()) {
       scheduleRender();
     }
@@ -256,6 +266,7 @@ async function renderPageFeatures() {
   renderPurchasesExportButton(routeKey);
   renderCartBulkUis(routeKey);
   renderNellisItemImageCarousels(routeKey);
+  renderWatchlistCountBadges(routeKey);
   renderDarkModeToggleButtons();
   attachPricePremiumHint();
   attachBidTotalPremiumHint();
@@ -1035,6 +1046,113 @@ function renderNellisItemImageCarousels(routeKey) {
     }
     attachNellisPhotoCarouselToAnchor(anchor, itemId, routeKey);
   }
+}
+
+function getProductIdFromWatchlistForm(form) {
+  const input = form.querySelector('input[name="productId"]');
+  if (input instanceof HTMLInputElement) {
+    const v = input.value.trim();
+    if (/^\d+$/.test(v)) {
+      return v;
+    }
+  }
+  return null;
+}
+
+function renderWatchlistCountBadges(_routeKey) {
+  if (!isNellisAuctionSite()) {
+    return;
+  }
+
+  const forms = document.querySelectorAll(
+    '[data-ax="item-card-watchlist-form"], [data-ax="product-page-watchlist-form"]'
+  );
+  const activeButtons = new Set();
+
+  for (const form of forms) {
+    if (!(form instanceof HTMLFormElement)) {
+      continue;
+    }
+    const button = form.querySelector('button');
+    if (!(button instanceof HTMLElement)) {
+      continue;
+    }
+    activeButtons.add(button);
+
+    const id = getProductIdFromWatchlistForm(form);
+    const count = id ? watchlistCountByItemId.get(id) : undefined;
+
+    let span = button.querySelector(`.${WATCHLIST_COUNT_CLASS}`);
+
+    if (count === undefined || count === 0) {
+      span?.remove();
+      continue;
+    }
+
+    if (!span) {
+      span = document.createElement('span');
+      span.className = WATCHLIST_COUNT_CLASS;
+      span.setAttribute('data-nellis-watchlist-count', '');
+      button.appendChild(span);
+    }
+    span.setAttribute('aria-label', `${count} on watchlist`);
+    span.textContent = String(count);
+  }
+
+  for (const span of document.querySelectorAll(`.${WATCHLIST_COUNT_CLASS}`)) {
+    const parent = span.parentElement;
+    if (!(parent instanceof HTMLElement) || !activeButtons.has(parent)) {
+      span.remove();
+    }
+  }
+
+  for (const form of forms) {
+    const next = form.nextElementSibling;
+    if (next instanceof HTMLElement && next.classList.contains(WATCHLIST_COUNT_CLASS)) {
+      next.remove();
+    }
+  }
+}
+
+function needsWatchlistCountRefresh() {
+  if (!isNellisAuctionSite()) {
+    return false;
+  }
+
+  for (const form of document.querySelectorAll(
+    '[data-ax="item-card-watchlist-form"], [data-ax="product-page-watchlist-form"]'
+  )) {
+    if (!(form instanceof HTMLFormElement)) {
+      continue;
+    }
+    const id = getProductIdFromWatchlistForm(form);
+    if (!id) {
+      continue;
+    }
+    const count = watchlistCountByItemId.get(id);
+    const button = form.querySelector('button');
+    if (!(button instanceof HTMLElement)) {
+      return true;
+    }
+    const span = button.querySelector(`.${WATCHLIST_COUNT_CLASS}`);
+    const shouldShow = count !== undefined && count > 0;
+
+    if (!shouldShow) {
+      if (span) {
+        return true;
+      }
+      continue;
+    }
+
+    if (!span) {
+      return true;
+    }
+    if (span.textContent !== String(count)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function renderPurchasesExportButton(routeKey) {
