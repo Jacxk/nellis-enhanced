@@ -1034,6 +1034,98 @@ export function injectStyles() {
       color: #a3a3a3 !important;
     }
 
+    /* Order cancellation flow (CSS modules — green panels, product link row, guideline cards) */
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] {
+      background-color: #0f2918 !important;
+      color: #ecfdf5 !important;
+      border-color: rgba(52, 211, 153, 0.35) !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] [class*="__cancellation-customer-tier-title"],
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] [class*="__cancellation-paragraph"] {
+      color: #d1fae5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] [class*="__traffic-light-base"][class*="__traffic-light-white"] {
+      background-color: #404040 !important;
+      border-color: rgba(163, 163, 163, 0.85) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] [class*="__traffic-light-green-background"] {
+      background-color: #15803d !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] [class*="__traffic-light-divider"] {
+      background-color: rgba(34, 197, 94, 0.28) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-container"][class*="__cancellation-form-green"] {
+      background-color: #0a1f14 !important;
+      border-color: rgba(74, 222, 128, 0.45) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a {
+      color: inherit !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a:focus-visible {
+      outline: 2px solid rgba(248, 113, 113, 0.75) !important;
+      outline-offset: 2px !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a [class*="__cancellation-product-item-container"] {
+      background-color: #171717 !important;
+      border-color: rgba(74, 222, 128, 0.45) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a [class*="__cancellation-item-product-item-title"] {
+      color: #f5f5f5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a [class*="__cancellation-product-item-image"] {
+      background-color: #ffffff !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-proceed"] {
+      background-color: rgba(0, 0, 0, 0.28) !important;
+      border-top: 1px solid rgba(74, 222, 128, 0.28) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-proceed"] [class*="text-neutral-800"] {
+      color: #ecfdf5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-proceed"] a[class*="border-primary"] {
+      border-color: rgba(248, 113, 113, 0.65) !important;
+      background-color: rgba(23, 23, 23, 0.92) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-proceed"] a[class*="border-primary"] span {
+      color: #f5f5f5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] {
+      background-color: #1a1a1a !important;
+      color: #e5e5e5 !important;
+      border: 1px solid #404040 !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] [class*="__cancellation-pay-for-items-title"],
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] h6,
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] li {
+      color: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] [class*="fill-emerald-600"] {
+      fill: #34d399 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] [class*="fill-burgundy-400"] {
+      fill: #f87171 !important;
+    }
+
     /* Receipts + cart items: use a "card" surface, not page surface */
     html.${DARK_MODE_HTML_CLASS} [class~="bg-white"][class*="rounded-itemCard"],
     html.${DARK_MODE_HTML_CLASS} [data-ax="pickups-item-container"][class~="bg-white"],
