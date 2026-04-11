@@ -39,6 +39,7 @@ import {
   CART_BULK_CHECKOUT_TOOLBAR_ID,
   CART_BULK_TOOLBAR_ID,
   CART_ITEM_FEE_HINT_CLASS,
+  DARK_MODE_CRITICAL_STYLE_ID,
   DARK_MODE_HTML_CLASS,
   DARK_MODE_ICON_MOON,
   DARK_MODE_ICON_SUN,
@@ -1786,6 +1787,27 @@ function needsDarkModeToggleRender() {
   return isNellisAuctionSite() && !document.getElementById(DARK_MODE_TOGGLE_ID);
 }
 
+function syncCriticalDarkModePaint() {
+  const isDark = document.documentElement.classList.contains(DARK_MODE_HTML_CLASS);
+  const existing = document.getElementById(DARK_MODE_CRITICAL_STYLE_ID);
+
+  if (!isDark) {
+    existing?.remove();
+    return;
+  }
+
+  const css = `html.${DARK_MODE_HTML_CLASS},html.${DARK_MODE_HTML_CLASS} body{background-color:#1f1f1f!important;color-scheme:dark}`;
+  if (existing) {
+    existing.textContent = css;
+    return;
+  }
+
+  const style = document.createElement('style');
+  style.id = DARK_MODE_CRITICAL_STYLE_ID;
+  style.textContent = css;
+  (document.head || document.documentElement).appendChild(style);
+}
+
 function applyStoredDarkMode() {
   try {
     if (localStorage.getItem(DARK_MODE_STORAGE_KEY) === '1') {
@@ -1796,6 +1818,7 @@ function applyStoredDarkMode() {
   } catch {
     document.documentElement.classList.remove(DARK_MODE_HTML_CLASS);
   }
+  syncCriticalDarkModePaint();
 }
 
 function syncDarkModeToggleButtons() {
@@ -1833,6 +1856,7 @@ function handleDarkModeToggle() {
   }
 
   syncDarkModeToggleButtons();
+  syncCriticalDarkModePaint();
   refreshComparisonCardStyling();
 }
 

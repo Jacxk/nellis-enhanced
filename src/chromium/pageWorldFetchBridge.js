@@ -1,3 +1,40 @@
+import {
+  DARK_MODE_CRITICAL_STYLE_ID,
+  DARK_MODE_HTML_CLASS,
+  DARK_MODE_STORAGE_KEY,
+} from '../shared/nellisUiConstants.js';
+
+/**
+ * MAIN world, document_start — runs before the isolated content script bundle.
+ * Applies dark class + a few bytes of background CSS as early as the platform allows,
+ * so the first paint is not a full-screen white flash while the large style tag loads.
+ */
+(function nellisDarkModeEarliestPaint() {
+  if (window.__nellisEnhancedDarkBoot) {
+    return;
+  }
+  window.__nellisEnhancedDarkBoot = true;
+
+  try {
+    if (localStorage.getItem(DARK_MODE_STORAGE_KEY) !== '1') {
+      return;
+    }
+
+    document.documentElement.classList.add(DARK_MODE_HTML_CLASS);
+
+    if (document.getElementById(DARK_MODE_CRITICAL_STYLE_ID)) {
+      return;
+    }
+
+    const style = document.createElement('style');
+    style.id = DARK_MODE_CRITICAL_STYLE_ID;
+    style.textContent = `html.${DARK_MODE_HTML_CLASS},html.${DARK_MODE_HTML_CLASS} body{background-color:#1f1f1f!important;color-scheme:dark}`;
+    (document.head || document.documentElement).appendChild(style);
+  } catch {
+    /* ignore */
+  }
+})();
+
 /**
  * Runs in the page MAIN world (see manifest) so `fetch` is the same function Remix uses.
  * Isolated content scripts cannot intercept page `fetch`; this bridge dispatches a DOM event
