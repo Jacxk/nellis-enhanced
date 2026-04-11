@@ -1218,6 +1218,36 @@ export function injectStyles() {
     html.${DARK_MODE_HTML_CLASS} button[data-ax="pickups-remove-from-cart"][class~="bg-secondary"]:not(:disabled):hover {
       background-color: #a3122a !important;
       background-image: linear-gradient(90deg, #a3122a 0%, #7d2418 100%) !important;
+
+/*
+     * Checkout payment — saved cards: Nellis only adds p-5 / shadow on the selected card;
+     * unselected [data-ax="checkout-payment-select-a-card"] rows omit padding. Match padding and
+     * card chrome for all rows + dark surfaces.
+     */
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-payment-saved-cards-container"]
+      .__grid-item
+      > div[class*="bg-white"] {
+      padding: 1.25rem !important;
+      background-color: #262626 !important;
+      color: #e5e5e5 !important;
+      box-shadow:
+        0 4px 6px -1px rgba(0, 0, 0, 0.35),
+        0 2px 4px -2px rgba(0, 0, 0, 0.28) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-payment-saved-cards-container"]
+      .__grid-item
+      > div[class*="border-neutral-100"] {
+      border-color: rgba(82, 82, 82, 0.65) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-payment-saved-cards-container"]
+      .__grid-item
+      > div[class*="border-primary"] {
+      border-color: rgba(248, 113, 113, 0.55) !important;
     }
 
     /* Dashboard cards that are visually "cards" but can be transparent (e.g. Cart items, Receipts) */
@@ -1275,6 +1305,109 @@ export function injectStyles() {
     html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gmnoscreen div {
       background-color: #e8e8e8 !important;
       color: #202124 !important;
+    }
+
+    /*
+     * Checkout → pick-ups → confirmation: stepper + sticky summary sit above
+     * [data-ax="checkout-confirmation-container"]; scope via main:has(...) so we
+     * don’t rely on pathname. Fixes black step icons, flat white cards, sticky bar.
+     */
+    html.${DARK_MODE_HTML_CLASS}
+      main:has([data-ax="checkout-confirmation-container"])
+      > div[class*="bg-white"]:first-child {
+      background-color: #1f1f1f !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} main:has([data-ax="checkout-confirmation-container"])
+      .__step-circle svg path,
+    html.${DARK_MODE_HTML_CLASS} main:has([data-ax="checkout-confirmation-container"])
+      .__icon-base path {
+      fill: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} main:has([data-ax="checkout-confirmation-container"])
+      .__step-circle.__step-done {
+      background-color: #14532d !important;
+      border-color: rgba(74, 222, 128, 0.45) !important;
+      color: #ecfdf5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} main:has([data-ax="checkout-confirmation-container"])
+      .__step-circle:not(.__step-done) {
+      background-color: #262626 !important;
+      border: 1px solid #525252 !important;
+      color: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} main:has([data-ax="checkout-confirmation-container"])
+      .__step-text,
+    html.${DARK_MODE_HTML_CLASS} main:has([data-ax="checkout-confirmation-container"])
+      .__step-text-done {
+      color: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} main:has([data-ax="checkout-confirmation-container"])
+      [class*="__step-connector"] {
+      border-color: #525252 !important;
+      background-color: #525252 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS}
+      main:has([data-ax="checkout-confirmation-container"])
+      > div[class*="sticky"][class*="bg-white"] {
+      background-color: #262626 !important;
+      border-color: rgba(82, 82, 82, 0.65) !important;
+      box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS}
+      main:has([data-ax="checkout-confirmation-container"])
+      > div[class*="sticky"]
+      [class*="border-y-neutral"] {
+      border-color: rgba(82, 82, 82, 0.75) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-confirmation-container"]
+      [class*="shadow-md"][class*="bg-white"],
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-confirmation-container"]
+      [class~="bg-white"][class*="border-neutral-100"] {
+      background-color: #262626 !important;
+      border-color: rgba(82, 82, 82, 0.55) !important;
+      color: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-confirmation-container"]
+      .__input-floating-label
+      label[class*="bg-white"],
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-confirmation-container"]
+      .__form-input-container
+      label[class*="bg-white"] {
+      background-color: #262626 !important;
+      color: #a3a3a3 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax="checkout-confirmation-container"] .__divider-base {
+      border-color: #525252 !important;
+      background-color: #525252 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-confirmation-container"]
+      [data-ax="checkout-confirmation-item-image-link"]
+      .__avatar-container {
+      border-color: rgba(82, 82, 82, 0.65) !important;
+      background-color: #171717 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-confirmation-container"]
+      svg[viewBox="0 0 384 512"]
+      path {
+      fill: #a3a3a3 !important;
     }
 
     html.${DARK_MODE_HTML_CLASS} #${CARD_ID} {
