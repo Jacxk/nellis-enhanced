@@ -1077,6 +1077,7 @@ export function injectStyles() {
     html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a [class*="__cancellation-product-item-container"] {
       background-color: #171717 !important;
       border-color: rgba(74, 222, 128, 0.45) !important;
+      border-radius: 0 !important;
     }
 
     html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a [class*="__cancellation-item-product-item-title"] {
@@ -1085,6 +1086,7 @@ export function injectStyles() {
 
     html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a [class*="__cancellation-product-item-image"] {
       background-color: #ffffff !important;
+      border-radius: 0 !important;
     }
 
     html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-proceed"] {
