@@ -138,6 +138,11 @@ document.addEventListener('nellis-enhanced-remix', (event) => {
   }
 });
 
+// Content scripts are registered at document_start; running theme + CSS only from init()
+// (on DOMContentLoaded) lets the first paint happen in light mode before dark styles apply.
+applyStoredDarkMode();
+injectStyles();
+
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init, { once: true });
 } else {
@@ -259,10 +264,44 @@ function scheduleRender() {
   renderTimer = window.setTimeout(renderPageFeatures, RENDER_DEBOUNCE_MS);
 }
 
+/**
+ * Reserve the Amazon comparison slot as soon as Item Details is in the DOM so
+ * later injections (carousel controls, etc.) do not push the section downward first.
+ */
+function primeComparisonCardSlot() {
+  if (!isNellisItemPage()) {
+    return;
+  }
+
+  const anchor = findItemDetailsAnchor();
+  if (!anchor) {
+    return;
+  }
+
+  const nellisItem = extractNellisItem();
+  if (nellisItem?.title && isNellisOnlyItemTitle(nellisItem.title)) {
+    removeExistingCard();
+    return;
+  }
+
+  if (document.getElementById(CARD_ID)) {
+    return;
+  }
+
+  const card = ensureCard(anchor);
+  updateCardState(card, {
+    state: 'loading',
+    nellisItem: nellisItem?.title ? nellisItem : { title: '', imageSrc: '', price: '' },
+  });
+}
+
 async function renderPageFeatures() {
   const routeKey = `${window.location.pathname}${window.location.search}`;
   injectStyles();
   applyStoredDarkMode();
+  if (isNellisItemPage()) {
+    primeComparisonCardSlot();
+  }
   renderPurchasesExportButton(routeKey);
   renderCartBulkUis(routeKey);
   renderNellisItemImageCarousels(routeKey);
@@ -292,13 +331,23 @@ async function renderComparisonCard(routeKey) {
     pendingRouteAttempts = 0;
   }
 
-  const nellisItem = extractNellisItem();
   const itemDetailsAnchor = findItemDetailsAnchor();
+  const nellisItem = extractNellisItem();
 
-  if (!nellisItem?.title || !itemDetailsAnchor) {
+  if (!itemDetailsAnchor) {
     if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
       pendingRouteAttempts += 1;
       window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    }
+    return;
+  }
+
+  if (!nellisItem?.title) {
+    if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
+      pendingRouteAttempts += 1;
+      window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    } else {
+      removeExistingCard();
     }
     return;
   }
