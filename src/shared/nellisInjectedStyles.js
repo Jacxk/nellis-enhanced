@@ -569,6 +569,23 @@ export function injectStyles() {
       background-color: #262626 !important;
     }
 
+    /* Scroll-to-top FAB: same neutral remap as page chrome — lift like dark-mode toggle */
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="scroll-to-top"] {
+      background-color: #404040 !important;
+      border: 1px solid rgba(148, 163, 184, 0.35) !important;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="scroll-to-top"]:hover {
+      background-color: #525252 !important;
+      border-color: rgba(203, 213, 225, 0.35) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="scroll-to-top"]:focus-visible {
+      outline: 2px solid rgba(148, 163, 184, 0.65) !important;
+      outline-offset: 2px !important;
+    }
+
     html.${DARK_MODE_HTML_CLASS} [class*="bg-neutral-800"],
     html.${DARK_MODE_HTML_CLASS} [class*="bg-neutral-900"] {
       background-color: #171717 !important;
@@ -688,6 +705,11 @@ export function injectStyles() {
     html.${DARK_MODE_HTML_CLASS} [class*="fill-secondary"],
     html.${DARK_MODE_HTML_CLASS} [class*="fill-black"] {
       fill: #d4d4d4 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="scroll-to-top"] [class*="fill-neutral-900"],
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="scroll-to-top"] [class*="fill-neutral-800"] {
+      fill: #f8fafc !important;
     }
 
     /*
@@ -864,6 +886,24 @@ export function injectStyles() {
       color: #ecfdf5 !important;
     }
 
+    /* Active auctions list: WINNING row is bg-emerald-200 only (no rounded on the strip) */
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"] [class*="bg-emerald-200"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"] [class*="bg-emerald-200"] {
+      background-color: #065f46 !important;
+      color: #ecfdf5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"] [class*="bg-emerald-200"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"] [class*="bg-emerald-200"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"] [class*="bg-emerald-200"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"] [class*="bg-emerald-200"] [class*="text-gray-600"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"] [class*="bg-emerald-200"] [class*="text-gray-900"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"] [class*="bg-emerald-200"] [class*="text-gray-800"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"] [class*="bg-emerald-200"] [class*="text-gray-700"],
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"] [class*="bg-emerald-200"] [class*="text-gray-600"] {
+      color: #ecfdf5 !important;
+    }
+
     html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"][class*="rounded"] [class*="text-gray-900"],
     html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"][class*="rounded"] [class*="text-gray-800"],
     html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"][class*="rounded"] [class*="text-gray-700"],
@@ -1034,12 +1074,181 @@ export function injectStyles() {
       color: #a3a3a3 !important;
     }
 
+    /* Order cancellation flow (CSS modules — green panels, product link row, guideline cards) */
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] {
+      background-color: #0f2918 !important;
+      color: #ecfdf5 !important;
+      border-color: rgba(52, 211, 153, 0.35) !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] [class*="__cancellation-customer-tier-title"],
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] [class*="__cancellation-paragraph"] {
+      color: #d1fae5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] [class*="__traffic-light-base"][class*="__traffic-light-white"] {
+      background-color: #404040 !important;
+      border-color: rgba(163, 163, 163, 0.85) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] [class*="__traffic-light-green-background"] {
+      background-color: #15803d !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-customer-tier-container"] [class*="__traffic-light-divider"] {
+      background-color: rgba(34, 197, 94, 0.28) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-container"][class*="__cancellation-form-green"] {
+      background-color: #0a1f14 !important;
+      border-color: rgba(74, 222, 128, 0.45) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a {
+      color: inherit !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a:focus-visible {
+      outline: 2px solid rgba(248, 113, 113, 0.75) !important;
+      outline-offset: 2px !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a [class*="__cancellation-product-item-container"] {
+      background-color: #171717 !important;
+      border-color: rgba(74, 222, 128, 0.45) !important;
+      border-radius: 0 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a [class*="__cancellation-item-product-item-title"] {
+      color: #f5f5f5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-content"] > a [class*="__cancellation-product-item-image"] {
+      background-color: #ffffff !important;
+      border-radius: 0 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-proceed"] {
+      background-color: rgba(0, 0, 0, 0.28) !important;
+      border-top: 1px solid rgba(74, 222, 128, 0.28) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-proceed"] [class*="text-neutral-800"] {
+      color: #ecfdf5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-proceed"] a[class*="border-primary"] {
+      border-color: rgba(248, 113, 113, 0.65) !important;
+      background-color: rgba(23, 23, 23, 0.92) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__cancellation-form-proceed"] a[class*="border-primary"] span {
+      color: #f5f5f5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] {
+      background-color: #1a1a1a !important;
+      color: #e5e5e5 !important;
+      border: 1px solid #404040 !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] [class*="__cancellation-pay-for-items-title"],
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] h6,
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] li {
+      color: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] [class*="fill-emerald-600"] {
+      fill: #34d399 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__checkout-card-container"][class*="__cancellation-header-shadow"] [class*="fill-burgundy-400"] {
+      fill: #f87171 !important;
+    }
+
+    /* Cart / loader: fetch error card (CSS module — stays white otherwise) */
+    html.${DARK_MODE_HTML_CLASS} [class*="__fetch-error-container"] {
+      background-color: #1a1a1a !important;
+      color: #d4d4d4 !important;
+      border: 1px solid #404040 !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__fetch-error-container"] > div {
+      color: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__fetch-error-container"] [class*="__fetch-error-title"] {
+      color: #fafafa !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="__fetch-error-container"] [class*="__fetch-error-subtitle"] {
+      color: #a3a3a3 !important;
+    }
+
     /* Receipts + cart items: use a "card" surface, not page surface */
     html.${DARK_MODE_HTML_CLASS} [class~="bg-white"][class*="rounded-itemCard"],
     html.${DARK_MODE_HTML_CLASS} [data-ax="pickups-item-container"][class~="bg-white"],
     html.${DARK_MODE_HTML_CLASS} [data-ax="pickups-item-container"][class*="bg-white"] {
       background-color: #262626 !important;
       border-color: rgba(82, 82, 82, 0.55) !important;
+    }
+
+    /* Pick ups checkout: summary column is bg-white remapped to same as body — restore a card surface */
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-xl"][class*="bg-white"]:has([data-ax="pickups-proceed-to-checkout-form"]) {
+      background-color: #262626 !important;
+      border: 1px solid rgba(82, 82, 82, 0.55) !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [class*="rounded-xl"][class*="bg-white"]:has([data-ax="pickups-proceed-to-checkout-form"]) h3 {
+      color: #fafafa !important;
+    }
+
+    /* Pick ups flow: global bg-secondary → flat gray kills CTA; restore Nellis gradient */
+    html.${DARK_MODE_HTML_CLASS} [data-ax="pickups-proceed-to-checkout-form"] button[class~="bg-secondary"]:not(:disabled),
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="pickups-remove-from-cart"][class~="bg-secondary"]:not(:disabled) {
+      background-color: #c31432 !important;
+      background-image: linear-gradient(90deg, #c31432 0%, #93291e 100%) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} [data-ax="pickups-proceed-to-checkout-form"] button[class~="bg-secondary"]:not(:disabled):hover,
+    html.${DARK_MODE_HTML_CLASS} button[data-ax="pickups-remove-from-cart"][class~="bg-secondary"]:not(:disabled):hover {
+      background-color: #a3122a !important;
+      background-image: linear-gradient(90deg, #a3122a 0%, #7d2418 100%) !important;
+    }
+
+    /*
+     * Checkout payment — saved cards: Nellis only adds p-5 / shadow on the selected card;
+     * unselected [data-ax="checkout-payment-select-a-card"] rows omit padding. Match padding and
+     * card chrome for all rows + dark surfaces.
+     */
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-payment-saved-cards-container"]
+      .__grid-item
+      > div[class*="bg-white"] {
+      padding: 1.25rem !important;
+      background-color: #262626 !important;
+      color: #e5e5e5 !important;
+      box-shadow:
+        0 4px 6px -1px rgba(0, 0, 0, 0.35),
+        0 2px 4px -2px rgba(0, 0, 0, 0.28) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-payment-saved-cards-container"]
+      .__grid-item
+      > div[class*="border-neutral-100"] {
+      border-color: rgba(82, 82, 82, 0.65) !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS}
+      [data-ax="checkout-payment-saved-cards-container"]
+      .__grid-item
+      > div[class*="border-primary"] {
+      border-color: rgba(248, 113, 113, 0.55) !important;
     }
 
     /* Dashboard cards that are visually "cards" but can be transparent (e.g. Cart items, Receipts) */
