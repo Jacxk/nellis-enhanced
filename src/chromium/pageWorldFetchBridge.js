@@ -53,6 +53,90 @@ import {
 
   let embeddedLoaderDispatched = false;
 
+  function parseDateWonMs(value) {
+    if (!value) {
+      return Number.NEGATIVE_INFINITY;
+    }
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+    }
+    if (typeof value === 'string') {
+      const t = Date.parse(value);
+      return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+    }
+    if (value instanceof Date) {
+      const t = value.getTime();
+      return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+    }
+    if (typeof value === 'object') {
+      if (typeof value.value === 'string') {
+        const t = Date.parse(value.value);
+        return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+      }
+    }
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  function getCartSortKey() {
+    try {
+      return localStorage.getItem('nellisCartSort') || 'dateWon_desc';
+    } catch {
+      return 'dateWon_desc';
+    }
+  }
+
+  function sortPickUpsItems(maybePayload, sortKey) {
+    if (!maybePayload || typeof maybePayload !== 'object') {
+      return false;
+    }
+
+    const candidates = [];
+    if (maybePayload.pickUps) {
+      candidates.push(maybePayload.pickUps);
+    }
+    if (maybePayload.data?.pickUps) {
+      candidates.push(maybePayload.data.pickUps);
+    }
+
+    let changed = false;
+    for (const pickUps of candidates) {
+      const items = pickUps?.items;
+      if (!Array.isArray(items) || items.length < 2) {
+        continue;
+      }
+
+      const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+      const sorted = items.slice().sort((a, b) => {
+        switch (sortKey) {
+          case 'dateWon_asc':
+            return parseDateWonMs(a?.dateWon) - parseDateWonMs(b?.dateWon);
+          case 'title_az':
+            return collator.compare(String(a?.leadDescription || ''), String(b?.leadDescription || ''));
+          case 'title_za':
+            return collator.compare(String(b?.leadDescription || ''), String(a?.leadDescription || ''));
+          case 'amount_desc':
+            return (Number(b?.amount) || 0) - (Number(a?.amount) || 0);
+          case 'amount_asc':
+            return (Number(a?.amount) || 0) - (Number(b?.amount) || 0);
+          case 'dateWon_desc':
+          default:
+            return parseDateWonMs(b?.dateWon) - parseDateWonMs(a?.dateWon);
+        }
+      });
+
+      // Avoid re-assigning if order is already correct.
+      for (let i = 0; i < sorted.length; i += 1) {
+        if (sorted[i] !== items[i]) {
+          pickUps.items = sorted;
+          changed = true;
+          break;
+        }
+      }
+    }
+
+    return changed;
+  }
+
   function dispatchEmbeddedRemixLoaderData() {
     if (embeddedLoaderDispatched) {
       return true;
@@ -121,7 +205,7 @@ import {
   const nativeFetch = window.fetch.bind(window);
 
   window.fetch = function nellisEnhancedFetch(input, init) {
-    return nativeFetch(input, init).then((response) => {
+    return nativeFetch(input, init).then(async (response) => {
       try {
         const reqUrl =
           typeof input === 'string'
@@ -138,25 +222,44 @@ import {
           return response;
         }
 
-        const clone = response.clone();
-        clone
-          .json()
-          .then((json) => {
-            const resourceUrl = new URL(reqUrl, window.location.href);
-            const dataKey = resourceUrl.searchParams.get('_data');
-            if (!dataKey) {
-              return;
-            }
+        const resourceUrl = new URL(reqUrl, window.location.href);
+        const dataKey = resourceUrl.searchParams.get('_data');
+        if (!dataKey) {
+          return response;
+        }
 
-            document.dispatchEvent(
-              new CustomEvent('nellis-enhanced-remix', {
-                bubbles: true,
-                composed: true,
-                detail: { dataKey, json },
-              })
-            );
+        const clone = response.clone();
+        const json = await clone.json().catch(() => undefined);
+        if (json === undefined) {
+          return response;
+        }
+
+        const isCartData =
+          resourceUrl.pathname === '/dashboard/cart' ||
+          resourceUrl.pathname.startsWith('/dashboard/cart/');
+        const shouldSortCart = isCartData && sortPickUpsItems(json, getCartSortKey());
+
+        document.dispatchEvent(
+          new CustomEvent('nellis-enhanced-remix', {
+            bubbles: true,
+            composed: true,
+            detail: { dataKey, json },
           })
-          .catch(() => {});
+        );
+
+        if (!shouldSortCart) {
+          return response;
+        }
+
+        // Replace the response body Remix consumes, preserving status/headers.
+        const nextHeaders = new Headers(response.headers);
+        nextHeaders.delete('content-length');
+        nextHeaders.set('content-type', 'application/json; charset=utf-8');
+        return new Response(JSON.stringify(json), {
+          status: response.status,
+          statusText: response.statusText,
+          headers: nextHeaders,
+        });
       } catch {
         // ignore
       }
