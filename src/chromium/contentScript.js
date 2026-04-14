@@ -39,6 +39,7 @@ import {
   CART_BULK_CHECKOUT_TOOLBAR_ID,
   CART_BULK_TOOLBAR_ID,
   CART_ITEM_FEE_HINT_CLASS,
+  DARK_MODE_CRITICAL_STYLE_ID,
   DARK_MODE_HTML_CLASS,
   DARK_MODE_ICON_MOON,
   DARK_MODE_ICON_SUN,
@@ -137,6 +138,11 @@ document.addEventListener('nellis-enhanced-remix', (event) => {
     console.warn('[NellisEnhanced] remix loader handler error:', err);
   }
 });
+
+// Content scripts are registered at document_start; running theme + CSS only from init()
+// (on DOMContentLoaded) lets the first paint happen in light mode before dark styles apply.
+applyStoredDarkMode();
+injectStyles();
 
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', init, { once: true });
@@ -259,10 +265,44 @@ function scheduleRender() {
   renderTimer = window.setTimeout(renderPageFeatures, RENDER_DEBOUNCE_MS);
 }
 
+/**
+ * Reserve the Amazon comparison slot as soon as Item Details is in the DOM so
+ * later injections (carousel controls, etc.) do not push the section downward first.
+ */
+function primeComparisonCardSlot() {
+  if (!isNellisItemPage()) {
+    return;
+  }
+
+  const anchor = findItemDetailsAnchor();
+  if (!anchor) {
+    return;
+  }
+
+  const nellisItem = extractNellisItem();
+  if (nellisItem?.title && isNellisOnlyItemTitle(nellisItem.title)) {
+    removeExistingCard();
+    return;
+  }
+
+  if (document.getElementById(CARD_ID)) {
+    return;
+  }
+
+  const card = ensureCard(anchor);
+  updateCardState(card, {
+    state: 'loading',
+    nellisItem: nellisItem?.title ? nellisItem : { title: '', imageSrc: '', price: '' },
+  });
+}
+
 async function renderPageFeatures() {
   const routeKey = `${window.location.pathname}${window.location.search}`;
   injectStyles();
   applyStoredDarkMode();
+  if (isNellisItemPage()) {
+    primeComparisonCardSlot();
+  }
   renderPurchasesExportButton(routeKey);
   renderCartBulkUis(routeKey);
   renderNellisItemImageCarousels(routeKey);
@@ -292,13 +332,23 @@ async function renderComparisonCard(routeKey) {
     pendingRouteAttempts = 0;
   }
 
-  const nellisItem = extractNellisItem();
   const itemDetailsAnchor = findItemDetailsAnchor();
+  const nellisItem = extractNellisItem();
 
-  if (!nellisItem?.title || !itemDetailsAnchor) {
+  if (!itemDetailsAnchor) {
     if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
       pendingRouteAttempts += 1;
       window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    }
+    return;
+  }
+
+  if (!nellisItem?.title) {
+    if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
+      pendingRouteAttempts += 1;
+      window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    } else {
+      removeExistingCard();
     }
     return;
   }
@@ -1737,6 +1787,27 @@ function needsDarkModeToggleRender() {
   return isNellisAuctionSite() && !document.getElementById(DARK_MODE_TOGGLE_ID);
 }
 
+function syncCriticalDarkModePaint() {
+  const isDark = document.documentElement.classList.contains(DARK_MODE_HTML_CLASS);
+  const existing = document.getElementById(DARK_MODE_CRITICAL_STYLE_ID);
+
+  if (!isDark) {
+    existing?.remove();
+    return;
+  }
+
+  const css = `html.${DARK_MODE_HTML_CLASS},html.${DARK_MODE_HTML_CLASS} body{background-color:#1f1f1f!important;color-scheme:dark}`;
+  if (existing) {
+    existing.textContent = css;
+    return;
+  }
+
+  const style = document.createElement('style');
+  style.id = DARK_MODE_CRITICAL_STYLE_ID;
+  style.textContent = css;
+  (document.head || document.documentElement).appendChild(style);
+}
+
 function applyStoredDarkMode() {
   try {
     if (localStorage.getItem(DARK_MODE_STORAGE_KEY) === '1') {
@@ -1747,6 +1818,7 @@ function applyStoredDarkMode() {
   } catch {
     document.documentElement.classList.remove(DARK_MODE_HTML_CLASS);
   }
+  syncCriticalDarkModePaint();
 }
 
 function syncDarkModeToggleButtons() {
@@ -1784,6 +1856,7 @@ function handleDarkModeToggle() {
   }
 
   syncDarkModeToggleButtons();
+  syncCriticalDarkModePaint();
   refreshComparisonCardStyling();
 }
 
