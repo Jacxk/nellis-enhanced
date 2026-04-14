@@ -390,6 +390,43 @@ export function injectStyles() {
       width: 100%;
     }
 
+    .nellis-cart-sort {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 10px;
+      width: 100%;
+    }
+
+    .nellis-cart-sort__label {
+      font-size: 13px;
+      font-weight: 700;
+      color: #111827;
+    }
+
+    .nellis-cart-sort__select {
+      flex: 0 0 auto;
+      min-height: 38px;
+      padding: 0 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      background: #ffffff;
+      color: #111827;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .nellis-cart-sort__label {
+      color: #f5f5f5;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .nellis-cart-sort__select {
+      background: #262626;
+      color: #f5f5f5;
+      border-color: rgba(245, 245, 245, 0.12);
+    }
+
     #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn,
     #${CART_BULK_CHECKOUT_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn {
       display: inline-flex;
