@@ -9,6 +9,7 @@ import {
   DARK_MODE_HTML_CLASS,
   DARK_MODE_TOGGLE_ID,
   PREMIUM_HINT_CLASS,
+  RECEIPTS_SUMMARY_ID,
   STYLE_ID,
   TIME_HINT_CLASS,
   WATCHLIST_COUNT_CLASS,
@@ -631,6 +632,12 @@ export function injectStyles() {
     html.${DARK_MODE_HTML_CLASS} .bg-white,
     html.${DARK_MODE_HTML_CLASS} [class*="bg-white"]:not([class*="before:bg-white"]) {
       background-color: #1f1f1f !important;
+    }
+
+    /* Receipts summary (extension-injected): use a card surface in dark mode */
+    html.${DARK_MODE_HTML_CLASS} #${RECEIPTS_SUMMARY_ID} [class~="bg-white"] {
+      background-color: #262626 !important;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
     }
 
     /* Search / listing “Filters” sticky bar: no solid strip (bg-white + lg:bg-neutral-100) */

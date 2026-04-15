@@ -52,6 +52,8 @@ import {
   PREMIUM_HINT_CLASS,
   PURCHASES_EXPORT_ID,
   PURCHASES_PAGE_SIZE,
+  RECEIPTS_PAGE_SIZE,
+  RECEIPTS_SUMMARY_ID,
   RENDER_DEBOUNCE_MS,
   RENDER_RETRY_MS,
   ROUTE_WATCH_INTERVAL_MS,
@@ -69,6 +71,9 @@ let pendingRouteAttempts = 0;
 let purchasesExportInFlight = false;
 let purchasesRouteKey = '';
 let purchasesRenderAttempts = 0;
+let receiptsRouteKey = '';
+let receiptsRenderAttempts = 0;
+let receiptsSummaryInFlight = false;
 let cartBulkRouteKey = '';
 let cartBulkRenderAttempts = 0;
 let cartBulkSaveInFlight = false;
@@ -320,6 +325,7 @@ async function renderPageFeatures() {
     primeComparisonCardSlot();
   }
   renderPurchasesExportButton(routeKey);
+  renderReceiptsSummary(routeKey);
   renderCartBulkUis(routeKey);
   renderNellisItemImageCarousels(routeKey);
   renderWatchlistCountBadges(routeKey);
@@ -994,6 +1000,10 @@ function isPurchasesPage(locationObject = window.location) {
   return locationObject.pathname === '/dashboard/purchases';
 }
 
+function isReceiptsPage(locationObject = window.location) {
+  return locationObject.pathname === '/dashboard/receipts';
+}
+
 function isCartPage(locationObject = window.location) {
   return locationObject.pathname === '/dashboard/cart' || locationObject.pathname.startsWith('/dashboard/cart/');
 }
@@ -1285,6 +1295,211 @@ function removePurchasesExportButton() {
   if (button) {
     button.remove();
   }
+}
+
+function renderReceiptsSummary(routeKey) {
+  if (!isReceiptsPage()) {
+    receiptsRouteKey = '';
+    receiptsRenderAttempts = 0;
+    removeReceiptsSummary();
+    return;
+  }
+
+  if (receiptsRouteKey !== routeKey) {
+    receiptsRouteKey = routeKey;
+    receiptsRenderAttempts = 0;
+  }
+
+  const anchor = findReceiptsAnchor();
+  if (!anchor) {
+    if (receiptsRenderAttempts < MAX_RENDER_RETRIES) {
+      receiptsRenderAttempts += 1;
+      window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    }
+    return;
+  }
+
+  receiptsRenderAttempts = 0;
+
+  let summary = document.getElementById(RECEIPTS_SUMMARY_ID);
+  if (!summary) {
+    summary = document.createElement('div');
+    summary.id = RECEIPTS_SUMMARY_ID;
+    summary.innerHTML = `
+      <div class="flex flex-wrap justify-end gap-2">
+        <div class="flex items-baseline gap-2 px-3 py-2 bg-white rounded-xl">
+          <div class="text-label-md opacity-70">Spent</div>
+          <div class="text-title-sm font-semibold text-neutral-800" data-role="spent">Loading…</div>
+        </div>
+        <div class="flex items-baseline gap-2 px-3 py-2 bg-white rounded-xl">
+          <div class="text-label-md opacity-70">Returned</div>
+          <div class="text-title-sm font-semibold text-neutral-800" data-role="returned">Loading…</div>
+        </div>
+        <div class="flex items-baseline gap-2 px-3 py-2 bg-white rounded-xl">
+          <div class="text-label-md opacity-70">Total</div>
+          <div class="text-title-sm font-semibold text-neutral-800" data-role="total">Loading…</div>
+        </div>
+      </div>
+    `;
+  }
+
+  summary.dataset.routeKey = routeKey;
+
+  if (summary.parentElement !== anchor) {
+    anchor.appendChild(summary);
+  }
+
+  void refreshReceiptsSummary(routeKey);
+}
+
+function findReceiptsAnchor(root = document) {
+  const headings = Array.from(root.querySelectorAll('h1, h2, h3, [role="heading"]'));
+  const receiptsHeading = headings.find((node) =>
+    node.textContent?.trim().toLowerCase().includes('receipts')
+  );
+
+  if (receiptsHeading) {
+    const headerRow = receiptsHeading.closest('.flex.justify-between.items-center');
+    if (headerRow instanceof HTMLElement) {
+      return headerRow;
+    }
+    if (receiptsHeading.parentElement) {
+      return receiptsHeading.parentElement;
+    }
+  }
+
+  return root.querySelector('main') || null;
+}
+
+function removeReceiptsSummary() {
+  const node = document.getElementById(RECEIPTS_SUMMARY_ID);
+  if (node) {
+    node.remove();
+  }
+}
+
+async function refreshReceiptsSummary(routeKey) {
+  const summary = document.getElementById(RECEIPTS_SUMMARY_ID);
+  if (!(summary instanceof HTMLElement)) {
+    return;
+  }
+  if (summary.dataset.routeKey !== routeKey) {
+    return;
+  }
+  if (receiptsSummaryInFlight) {
+    return;
+  }
+
+  receiptsSummaryInFlight = true;
+  try {
+    const receipts = await fetchAllReceipts();
+    const spent = receipts.reduce((acc, record) => {
+      const total = Number(record?.total);
+      return acc + (Number.isFinite(total) && total > 0 ? total : 0);
+    }, 0);
+
+    // Some receipts APIs represent returns as negative totals. Treat any negative total as a return.
+    const returned = receipts.reduce((acc, record) => {
+      const total = Number(record?.total);
+      if (!Number.isFinite(total)) {
+        return acc;
+      }
+      if (total < 0) {
+        return acc + total; // negative
+      }
+      const count = Number(record?.returnCount) || 0;
+      if (count > 0) {
+        return acc - Math.abs(total); // force return dollars to reduce net
+      }
+      return acc;
+    }, 0);
+
+    const net = spent + returned;
+
+    const spentNode = summary.querySelector('[data-role="spent"]');
+    const returnedNode = summary.querySelector('[data-role="returned"]');
+    const totalNode = summary.querySelector('[data-role="total"]');
+    if (spentNode) spentNode.textContent = formatCurrency(spent);
+    if (returnedNode) {
+      const returnedAbs = Math.abs(returned);
+      returnedNode.textContent = returnedAbs === 0 ? formatCurrency(0) : `-${formatCurrency(returnedAbs)}`;
+    }
+    if (totalNode) totalNode.textContent = formatCurrency(net);
+  } catch (error) {
+    console.error('[NellisCompare] Failed to load receipts summary:', error);
+    const spentNode = summary.querySelector('[data-role="spent"]');
+    const returnedNode = summary.querySelector('[data-role="returned"]');
+    const totalNode = summary.querySelector('[data-role="total"]');
+    if (spentNode) spentNode.textContent = '—';
+    if (returnedNode) returnedNode.textContent = '—';
+    if (totalNode) totalNode.textContent = '—';
+  } finally {
+    receiptsSummaryInFlight = false;
+  }
+}
+
+async function fetchAllReceipts() {
+  const allRecords = [];
+  let page = 0;
+  let total = Infinity;
+
+  while (allRecords.length < total) {
+    const pageData = await fetchReceiptsPage({ page, size: RECEIPTS_PAGE_SIZE });
+    const records = getReceiptsRecords(pageData);
+    const nextTotal = Number(pageData?.total);
+    total = Number.isFinite(nextTotal) && nextTotal >= 0 ? nextTotal : records.length;
+
+    if (!records.length) {
+      break;
+    }
+
+    allRecords.push(...records);
+    page += 1;
+  }
+
+  return allRecords.slice(0, Number.isFinite(total) ? total : allRecords.length);
+}
+
+async function fetchReceiptsPage({ page, size }) {
+  const endpointUrl = new URL('/dashboard/receipts', window.location.origin);
+  endpointUrl.searchParams.set('_data', 'routes/dashboard.receipts._index');
+  endpointUrl.searchParams.set('_p', `s:${size},n:${page}`);
+
+  const response = await fetch(endpointUrl.toString(), {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      accept: 'application/json, text/plain, */*',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Receipts request failed with status ${response.status}`);
+  }
+
+  const responseText = await response.text();
+  const parsed = JSON.parse(responseText);
+  return getReceiptsPageData(parsed);
+}
+
+function getReceiptsPageData(payload) {
+  if (payload?.page && Array.isArray(payload.page.records)) {
+    return payload.page;
+  }
+  if (payload?.data?.page && Array.isArray(payload.data.page.records)) {
+    return payload.data.page;
+  }
+  if (Array.isArray(payload?.records)) {
+    return payload;
+  }
+  if (Array.isArray(payload?.data?.records)) {
+    return payload.data;
+  }
+  return { total: 0, records: [] };
+}
+
+function getReceiptsRecords(pageData) {
+  return Array.isArray(pageData?.records) ? pageData.records : [];
 }
 
 function isCartRowBulkSaveForLaterEligible(row) {
