@@ -550,3 +550,95 @@ export function mergeWatchlistCountFromRemixPayload(payload, intoMap) {
   walk(payload, 0);
   return changed;
 }
+
+function pickNonRefundableFromRecord(record) {
+  if (!record || typeof record !== 'object') {
+    return null;
+  }
+
+  const candidates = [
+    record.nonRefundable,
+    record.non_refundable,
+    record.isNonRefundable,
+    record.is_non_refundable,
+    record.item?.nonRefundable,
+    record.item?.non_refundable,
+    record.listing?.nonRefundable,
+    record.listing?.non_refundable,
+    record.product?.nonRefundable,
+    record.product?.non_refundable,
+  ];
+
+  for (const c of candidates) {
+    if (typeof c === 'boolean') {
+      return c;
+    }
+    if (typeof c === 'string') {
+      const v = c.trim().toLowerCase();
+      if (v === 'true') {
+        return true;
+      }
+      if (v === 'false') {
+        return false;
+      }
+    }
+    if (typeof c === 'number') {
+      if (c === 1) {
+        return true;
+      }
+      if (c === 0) {
+        return false;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Walks Remix loader JSON and merges non-refundable flags into `intoMap` keyed by Nellis item / product id.
+ * @returns {boolean} true if the map changed
+ */
+export function mergeNonRefundableFromRemixPayload(payload, intoMap) {
+  if (!payload || typeof payload !== 'object') {
+    return false;
+  }
+
+  let changed = false;
+  const seen = new WeakSet();
+
+  function walk(node, depth) {
+    if (depth > 14 || !node || typeof node !== 'object') {
+      return;
+    }
+    if (seen.has(node)) {
+      return;
+    }
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      for (const el of node) {
+        walk(el, depth + 1);
+      }
+      return;
+    }
+
+    const id = resolveRecordItemId(node);
+    const flag = pickNonRefundableFromRecord(node);
+    if (id && flag !== null) {
+      if (intoMap.get(id) !== flag) {
+        intoMap.set(id, flag);
+        changed = true;
+      }
+    }
+
+    for (const v of Object.values(node)) {
+      if (v && typeof v === 'object') {
+        walk(v, depth + 1);
+      }
+    }
+  }
+
+  walk(payload, 0);
+  return changed;
+}
