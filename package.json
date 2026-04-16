@@ -1,6 +1,6 @@
 {
   "name": "nellis-enhanced",
-  "version": "2026.4.14",
+  "version": "2026.4.16",
   "description": "Nellis enhanced browser extension",
   "type": "module",
   "scripts": {
