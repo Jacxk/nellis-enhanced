@@ -1677,6 +1677,20 @@ function buildCartItemDataIndex(items) {
   return map;
 }
 
+const CART_SORT_OPTIONS = [
+  ['dateWon_desc', 'Date won (new → old)'],
+  ['dateWon_asc', 'Date won (old → new)'],
+  ['title_az', 'Title (A → Z)'],
+  ['title_za', 'Title (Z → A)'],
+  ['amount_desc', 'Bid amount (high → low)'],
+  ['amount_asc', 'Bid amount (low → high)'],
+];
+
+function getCartSortLabelForKey(key) {
+  const row = CART_SORT_OPTIONS.find(([v]) => v === key);
+  return row ? row[1] : CART_SORT_OPTIONS[0][1];
+}
+
 function renderCartSortDropdown(allRows) {
   if (!allRows?.length) {
     return;
@@ -1687,50 +1701,137 @@ function renderCartSortDropdown(allRows) {
     return;
   }
 
-  let wrap = document.getElementById(CART_SORT_DROPDOWN_ID)?.closest?.('.nellis-cart-sort');
+  let wrap = document.getElementById(CART_SORT_DROPDOWN_ID);
   if (!(wrap instanceof HTMLElement)) {
     wrap = document.createElement('div');
-    wrap.className = 'nellis-cart-sort';
+    wrap.id = CART_SORT_DROPDOWN_ID;
+    wrap.className = 'nellis-cart-sort relative block text-left min-w-72';
 
-    const label = document.createElement('label');
-    label.className = 'nellis-cart-sort__label';
-    label.textContent = 'Sort';
-    label.setAttribute('for', CART_SORT_DROPDOWN_ID);
+    const shell = document.createElement('div');
+    shell.className = 'relative block text-left min-w-72';
 
-    const select = document.createElement('select');
-    select.id = CART_SORT_DROPDOWN_ID;
-    select.className = 'nellis-cart-sort__select';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className =
+      'flex items-center justify-between w-full border border-solid border-gray-500 rounded-xl px-3 py-2 bg-white hover:border-gray-700 focus:outline-secondary shadow-md';
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('data-ax', 'nellis-cart-sort-trigger');
 
-    const options = [
-      ['dateWon_desc', 'Date won (new → old)'],
-      ['dateWon_asc', 'Date won (old → new)'],
-      ['title_az', 'Title (A → Z)'],
-      ['title_za', 'Title (Z → A)'],
-      ['amount_desc', 'Bid amount (high → low)'],
-      ['amount_asc', 'Bid amount (low → high)'],
-    ];
+    const textCol = document.createElement('div');
+    textCol.className = 'flex flex-col text-left';
 
-    select.append(
-      ...options.map(([value, text]) => {
-        const opt = document.createElement('option');
-        opt.value = value;
-        opt.textContent = text;
-        return opt;
-      })
+    const hint = document.createElement('p');
+    hint.className = 'cursor-pointer text-label-sm';
+    hint.textContent = 'Sort by';
+
+    const valueEl = document.createElement('p');
+    valueEl.className = 'font-semibold text-title-xs pr-2';
+    valueEl.dataset.role = 'nellis-cart-sort-value';
+
+    textCol.append(hint, valueEl);
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svg.setAttribute('viewBox', '0 0 320 512');
+    svg.setAttribute('width', '20');
+    svg.setAttribute('height', '20');
+    svg.setAttribute('class', 'fill-secondary shrink-0 transition-transform duration-200');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute(
+      'd',
+      'M137.4 374.6c12.5 12.5 32.8 12.5 45.3 0l128-128c9.2-9.2 11.9-22.9 6.9-34.9s-16.6-19.8-29.6-19.8L32 192c-12.9 0-24.6 7.8-29.6 19.8s-2.2 25.7 6.9 34.9l128 128z'
     );
+    svg.appendChild(path);
 
-    select.addEventListener('change', () => {
-      const v = select.value || 'dateWon_desc';
-      setStoredCartSortKey(v);
-      applyCartSortToDom(v);
+    btn.append(textCol, svg);
+
+    const menu = document.createElement('ul');
+    menu.setAttribute('role', 'listbox');
+    menu.className =
+      'absolute left-0 right-0 z-50 mt-1 max-h-60 overflow-auto rounded-xl border border-solid border-gray-500 bg-white py-1 shadow-md hidden';
+    menu.hidden = true;
+
+    for (const [value, text] of CART_SORT_OPTIONS) {
+      const li = document.createElement('li');
+      li.setAttribute('role', 'none');
+      const optBtn = document.createElement('button');
+      optBtn.type = 'button';
+      optBtn.setAttribute('role', 'option');
+      optBtn.dataset.value = value;
+      optBtn.className =
+        'w-full px-3 py-2 text-left text-body-md hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none';
+      optBtn.textContent = text;
+      li.appendChild(optBtn);
+      menu.appendChild(li);
+    }
+
+    let docCloser = null;
+    const detachDocCloser = () => {
+      if (docCloser) {
+        document.removeEventListener('click', docCloser, true);
+        docCloser = null;
+      }
+    };
+
+    const closeMenu = () => {
+      menu.classList.add('hidden');
+      menu.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+      svg.classList.remove('rotate-180');
+      detachDocCloser();
+    };
+
+    const openMenu = () => {
+      menu.classList.remove('hidden');
+      menu.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      svg.classList.add('rotate-180');
+    };
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!menu.hidden) {
+        closeMenu();
+        return;
+      }
+      openMenu();
+      detachDocCloser();
+      docCloser = (ev) => {
+        if (!wrap.contains(ev.target)) {
+          closeMenu();
+        }
+      };
+      window.setTimeout(() => document.addEventListener('click', docCloser, true), 0);
     });
 
-    wrap.append(label, select);
+    menu.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeMenu();
+        btn.focus();
+      }
+    });
+
+    for (const optBtn of menu.querySelectorAll('button[role="option"]')) {
+      optBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const v = optBtn.dataset.value || 'dateWon_desc';
+        setStoredCartSortKey(v);
+        applyCartSortToDom(v);
+        valueEl.textContent = optBtn.textContent || getCartSortLabelForKey(v);
+        closeMenu();
+      });
+    }
+
+    shell.append(btn, menu);
+    wrap.appendChild(shell);
   }
 
-  const select = wrap.querySelector(`#${CART_SORT_DROPDOWN_ID}`);
-  if (select instanceof HTMLSelectElement) {
-    select.value = getStoredCartSortKey();
+  const valueEl = wrap.querySelector('[data-role="nellis-cart-sort-value"]');
+  if (valueEl) {
+    valueEl.textContent = getCartSortLabelForKey(getStoredCartSortKey());
   }
 
   if (wrap.parentElement !== anchor || wrap !== anchor.firstElementChild) {

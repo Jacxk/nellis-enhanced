@@ -5,6 +5,7 @@ import {
   CARD_ID,
   CART_BULK_CHECKOUT_TOOLBAR_ID,
   CART_BULK_TOOLBAR_ID,
+  CART_SORT_DROPDOWN_ID,
   CART_ITEM_FEE_HINT_CLASS,
   DARK_MODE_HTML_CLASS,
   DARK_MODE_TOGGLE_ID,
@@ -390,41 +391,32 @@ export function injectStyles() {
       width: 100%;
     }
 
-    .nellis-cart-sort {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
+    #${CART_SORT_DROPDOWN_ID} {
       margin: 0 0 10px;
-      width: 100%;
     }
 
-    .nellis-cart-sort__label {
-      font-size: 13px;
-      font-weight: 700;
-      color: #111827;
+    html.${DARK_MODE_HTML_CLASS} #${CART_SORT_DROPDOWN_ID} [data-ax="nellis-cart-sort-trigger"] {
+      background-color: #262626 !important;
+      border-color: rgba(115, 115, 115, 0.65) !important;
     }
 
-    .nellis-cart-sort__select {
-      flex: 0 0 auto;
-      min-height: 38px;
-      padding: 0 12px;
-      border-radius: 10px;
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      border: 1px solid rgba(15, 23, 42, 0.12);
-      background: #ffffff;
-      color: #111827;
+    html.${DARK_MODE_HTML_CLASS} #${CART_SORT_DROPDOWN_ID} [data-ax="nellis-cart-sort-trigger"] .text-label-sm,
+    html.${DARK_MODE_HTML_CLASS} #${CART_SORT_DROPDOWN_ID} [data-ax="nellis-cart-sort-trigger"] .text-title-xs {
+      color: #e5e5e5 !important;
     }
 
-    html.${DARK_MODE_HTML_CLASS} .nellis-cart-sort__label {
-      color: #f5f5f5;
+    html.${DARK_MODE_HTML_CLASS} #${CART_SORT_DROPDOWN_ID} ul[role="listbox"] {
+      background-color: #262626 !important;
+      border-color: rgba(115, 115, 115, 0.65) !important;
     }
 
-    html.${DARK_MODE_HTML_CLASS} .nellis-cart-sort__select {
-      background: #262626;
-      color: #f5f5f5;
-      border-color: rgba(245, 245, 245, 0.12);
+    html.${DARK_MODE_HTML_CLASS} #${CART_SORT_DROPDOWN_ID} ul[role="listbox"] button[role="option"] {
+      color: #e5e5e5 !important;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} #${CART_SORT_DROPDOWN_ID} ul[role="listbox"] button[role="option"]:hover,
+    html.${DARK_MODE_HTML_CLASS} #${CART_SORT_DROPDOWN_ID} ul[role="listbox"] button[role="option"]:focus {
+      background-color: #333333 !important;
     }
 
     #${CART_BULK_TOOLBAR_ID} .nellis-cart-bulk-toolbar__btn,
