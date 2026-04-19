@@ -29,14 +29,14 @@ export function isNellisItemPage(locationObject = window.location) {
   return isNellisAuctionSite(locationObject) && /^\/p\/[^/]+\/\d+/.test(locationObject.pathname);
 }
 
-export function extractNellisItem(root = document) {
+export function extractNellisItem(root = document, { allowEmptyTitle = false } = {}) {
   const title = extractText(root, TITLE_SELECTORS);
-  if (!title) {
+  if (!title && !allowEmptyTitle) {
     return null;
   }
 
   return {
-    title,
+    title: title || '',
     imageSrc: extractImage(root, IMAGE_SELECTORS),
     price: extractText(root, PRICE_SELECTORS),
   };

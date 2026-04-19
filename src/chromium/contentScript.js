@@ -1,4 +1,5 @@
 import {
+  extractNellisItemTitleFromRemixPayload,
   formatNellisCloseTimeTooltip,
   mergeAuctionListPhotoPayload,
   mergeCloseTimeFromRemixPayload,
@@ -87,6 +88,8 @@ const closeTimeByItemId = new Map();
 const watchlistCountByItemId = new Map();
 const auctionListPhotosByItemId = new Map();
 let lastCartPickupsItems = [];
+/** Listing title from Remix loader for the current item page id (preferred over DOM for Amazon search). */
+let remixItemPageTitle = null;
 
 /**
  * Remix `fetch` runs in the page main world; the isolated content script cannot patch it.
@@ -141,6 +144,14 @@ function handleRemixLoaderPayload(json, dataKey) {
     const pageId = parseNellisItemIdFromPathname(window.location.pathname);
     if (pageId) {
       changed = mergeNellisItemPagePhotoPayload(json, pageId, auctionListPhotosByItemId) || changed;
+      const remixTitle = extractNellisItemTitleFromRemixPayload(json, pageId);
+      if (remixTitle) {
+        const prev = remixItemPageTitle;
+        if (prev?.itemId !== pageId || prev?.title !== remixTitle) {
+          remixItemPageTitle = { itemId: pageId, title: remixTitle };
+          changed = true;
+        }
+      }
     }
   }
   if (changed) {
@@ -287,6 +298,25 @@ function scheduleRender() {
 }
 
 /**
+ * Prefer Remix loader title for Amazon search; fall back to DOM-scraped title.
+ */
+function buildNellisItemForAmazonCompare() {
+  const pageId = parseNellisItemIdFromPathname(window.location.pathname);
+  const dom = extractNellisItem(document, { allowEmptyTitle: true });
+  const remixTitle =
+    pageId && remixItemPageTitle?.itemId === pageId ? remixItemPageTitle.title.trim() : '';
+  const title = remixTitle || (dom?.title || '').trim();
+  if (!title) {
+    return null;
+  }
+  return {
+    title,
+    imageSrc: dom?.imageSrc || '',
+    price: dom?.price || '',
+  };
+}
+
+/**
  * Reserve the Amazon comparison slot as soon as Item Details is in the DOM so
  * later injections (carousel controls, etc.) do not push the section downward first.
  */
@@ -300,7 +330,7 @@ function primeComparisonCardSlot() {
     return;
   }
 
-  const nellisItem = extractNellisItem();
+  const nellisItem = buildNellisItemForAmazonCompare();
   if (nellisItem?.title && isNellisOnlyItemTitle(nellisItem.title)) {
     removeExistingCard();
     return;
@@ -355,7 +385,7 @@ async function renderComparisonCard(routeKey) {
   }
 
   const itemDetailsAnchor = findItemDetailsAnchor();
-  const nellisItem = extractNellisItem();
+  const nellisItem = buildNellisItemForAmazonCompare();
 
   if (!itemDetailsAnchor) {
     if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
@@ -457,6 +487,7 @@ function cleanupItemComparison(routeKey) {
   lastRenderedTitle = '';
   pendingRouteKey = '';
   pendingRouteAttempts = 0;
+  remixItemPageTitle = null;
   removeExistingCard();
 }
 
