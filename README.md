@@ -6,6 +6,8 @@
 
 - **Amazon comparison card**: injects an Amazon match under **Item Details** on item pages.
 - **Dark mode**: site-wide dark styling with a persistent toggle.
+- **Receipts totals summary**: shows **spent / returned / total** at a glance on the Receipts page.
+- **Cart sort UI improvements**: cart sort dropdown is styled to match Nellis’ native dropdowns.
 - **SPA-aware injection**: re-applies enhancements as Nellis navigates without full page loads.
 - **Extra helpers**: small UI hints (e.g. bid/price helpers) to reduce friction while browsing.
 
@@ -13,16 +15,32 @@
 
 This extension is distributed as a **zip** containing the unpacked extension folder. Install it by loading it as an unpacked extension.
 
-1. Download the latest release asset (`nellis-enhanced-<tag>-chromium.zip`) from **GitHub Releases**.
-2. Unzip it somewhere permanent on your machine (don’t delete the folder after installing).
-3. Open `chrome://extensions/` (or `edge://extensions/`).
-4. Enable **Developer mode**.
+### Step-by-step (dummy proof)
+
+1. Download the latest release asset from **Latest Release**:
+   - **Latest Release**: [github.com/Jacxk/nellis-enhanced/releases/latest](https://github.com/Jacxk/nellis-enhanced/releases/latest)
+   - Look for: `nellis-enhanced-<tag>-chromium.zip`
+2. Unzip the downloaded file to a folder you will keep (Desktop is fine, but don’t delete it later).
+3. Open your extensions page:
+   - Chrome: `chrome://extensions/`
+   - Edge: `edge://extensions/`
+4. Turn on **Developer mode** (toggle in the top-right).
 5. Click **Load unpacked**.
-6. Select the **unzipped folder** (the one that contains `manifest.json` at its root).
+6. Select the **unzipped folder** that contains `manifest.json` directly inside it.
+   - If you don’t see `manifest.json`, you picked the wrong folder level. Go “up” or “down” until you do.
 
 To update later, download/unzip the new release and either:
 - remove + re-add the unpacked extension pointing at the new folder, or
 - keep the same folder path and replace its contents, then click **Reload** on the extension card.
+
+### Troubleshooting
+
+- **“Manifest file is missing or unreadable”**
+  - You selected the wrong folder. You must select the folder that has `manifest.json` directly inside it.
+- **“Load unpacked” is missing**
+  - Turn on **Developer mode** on the extensions page first.
+- **The extension worked, then stopped after deleting the unzip folder**
+  - Unzip to a permanent folder (the browser loads the extension from that exact path).
 
 ## Development / build from source
 
