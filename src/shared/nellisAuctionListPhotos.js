@@ -84,6 +84,32 @@ function collectUrlsFromPhotos(photos) {
   return out;
 }
 
+function pickNellisTitleFromRecord(record) {
+  if (!record || typeof record !== 'object') {
+    return '';
+  }
+  const nested = [record.listing, record.product, record.item].filter(Boolean);
+  const candidates = [
+    record.leadDescription,
+    record.title,
+    record.name,
+    ...nested.flatMap((node) => [
+      node.leadDescription,
+      node.title,
+      node.name,
+    ]),
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'string') {
+      const t = c.trim();
+      if (t) {
+        return t;
+      }
+    }
+  }
+  return '';
+}
+
 function resolveRecordItemId(record) {
   if (!record || typeof record !== 'object') {
     return null;
@@ -370,6 +396,61 @@ export function mergeNellisItemPagePhotoPayload(payload, pageItemId, intoMap) {
 
   walk(payload, 0);
   return changed;
+}
+
+/**
+ * Finds a human-readable listing title for the current `/p/.../id` item in Remix loader JSON.
+ * Prefer this over DOM scraping when available — layout changes won’t break the search query.
+ */
+export function extractNellisItemTitleFromRemixPayload(payload, pageItemId) {
+  if (!pageItemId || !payload || typeof payload !== 'object') {
+    return '';
+  }
+
+  let found = '';
+  const seen = new WeakSet();
+
+  const tryRecord = (record) => {
+    if (!record || typeof record !== 'object' || found) {
+      return;
+    }
+    const id = resolveRecordItemId(record);
+    if (!id || id !== pageItemId) {
+      return;
+    }
+    const t = pickNellisTitleFromRecord(record);
+    if (t) {
+      found = t;
+    }
+  };
+
+  function walk(node, depth) {
+    if (found || depth > 14 || node == null || typeof node !== 'object') {
+      return;
+    }
+    if (seen.has(node)) {
+      return;
+    }
+    seen.add(node);
+
+    if (Array.isArray(node)) {
+      for (const el of node) {
+        walk(el, depth + 1);
+      }
+      return;
+    }
+
+    tryRecord(node);
+
+    for (const v of Object.values(node)) {
+      if (v && typeof v === 'object') {
+        walk(v, depth + 1);
+      }
+    }
+  }
+
+  walk(payload, 0);
+  return found;
 }
 
 function parseRemixCloseTime(raw) {
