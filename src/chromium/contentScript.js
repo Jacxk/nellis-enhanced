@@ -26,10 +26,9 @@ import {
   isNellisOnlyItemTitle,
   parseCurrencyAmount,
 } from '../shared/nellisPage.js';
-import { sendRuntimeMessage } from '../shared/extensionApi.js';
+import { fetchNellisViaBackground, sendRuntimeMessage } from '../shared/extensionApi.js';
 import { getAmazonItemFromHtml } from '../shared/amazonSource.js';
 import { parseAmazonProductPage } from '../shared/productMatcher.js';
-
 import {
   AUCTION_LIST_PHOTO_BAR_CLASS,
   AUCTION_LIST_PHOTO_WRAP_CLASS,
@@ -61,6 +60,14 @@ import {
   WATCHLIST_COUNT_CLASS,
 } from '../shared/nellisUiConstants.js';
 import { injectStyles } from '../shared/nellisInjectedStyles.js';
+
+async function fetchNellisAsResponse(url, init = {}) {
+  const parsed = await fetchNellisViaBackground(url, init);
+  return new Response(parsed.bodyText, {
+    status: parsed.status,
+    statusText: parsed.statusText || '',
+  });
+}
 
 let activeRouteKey = '';
 let renderTimer = 0;
@@ -861,9 +868,8 @@ async function handleTimeHintHover(event) {
   container.setAttribute('data-time-tooltip', 'Loading...');
 
   try {
-    const response = await fetch(itemUrl, {
+    const response = await fetchNellisAsResponse(itemUrl, {
       method: 'GET',
-      credentials: 'include',
       headers: {
         accept: 'text/html,application/xhtml+xml',
       },
@@ -1465,9 +1471,8 @@ async function fetchReceiptsPage({ page, size }) {
   endpointUrl.searchParams.set('_data', 'routes/dashboard.receipts._index');
   endpointUrl.searchParams.set('_p', `s:${size},n:${page}`);
 
-  const response = await fetch(endpointUrl.toString(), {
+  const response = await fetchNellisAsResponse(endpointUrl.toString(), {
     method: 'GET',
-    credentials: 'include',
     headers: {
       accept: 'application/json, text/plain, */*',
     },
@@ -2286,15 +2291,13 @@ async function postCartPickupsFormForRow(row, actionValue, errorLabel) {
   const actionUrl = new URL(action, window.location.origin).toString();
   const body = buildCartFormPostBody(form, actionValue);
 
-  const response = await fetch(actionUrl, {
+  const response = await fetchNellisAsResponse(actionUrl, {
     method: 'POST',
-    credentials: 'include',
     headers: {
       accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
     },
     body: body.toString(),
-    redirect: 'follow',
   });
 
   if (!response.ok) {
@@ -2604,35 +2607,20 @@ async function fetchPurchasesPage({ page, size, omitPageParam = false }) {
     endpointUrl.searchParams.set('page', String(page));
   }
 
-  try {
-    const response = await fetch(endpointUrl.toString(), {
-      method: 'GET',
-      credentials: 'include',
-      headers: {
-        accept: 'application/json, text/plain, */*',
-      },
-    });
+  const response = await fetchNellisAsResponse(endpointUrl.toString(), {
+    method: 'GET',
+    headers: {
+      accept: 'application/json, text/plain, */*',
+    },
+  });
 
-    if (!response.ok) {
-      throw new Error(`Purchases request failed with status ${response.status}`);
-    }
-
-    const responseText = await response.text();
-    const parsed = JSON.parse(responseText);
-    return getPurchasesPageData(parsed);
-  } catch (error) {
-    const fallbackResponse = await sendRuntimeMessage({
-      type: 'FETCH_PURCHASES_PAGE',
-      page,
-      size,
-    });
-
-    if (fallbackResponse?.error) {
-      throw error;
-    }
-
-    return getPurchasesPageData(fallbackResponse?.data);
+  if (!response.ok) {
+    throw new Error(`Purchases request failed with status ${response.status}`);
   }
+
+  const responseText = await response.text();
+  const parsed = JSON.parse(responseText);
+  return getPurchasesPageData(parsed);
 }
 
 function getPurchasesPageData(payload) {
