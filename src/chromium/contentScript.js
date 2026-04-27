@@ -94,6 +94,8 @@ let lastKnownUrl = window.location.href;
 const closeTimeByItemId = new Map();
 const watchlistCountByItemId = new Map();
 const auctionListPhotosByItemId = new Map();
+const prefetchedAuctionPhotoUrls = new Set();
+const activeAuctionPhotoPrefetches = new Map();
 let lastCartPickupsItems = [];
 /** Listing title from Remix loader for the current item page id (preferred over DOM for Amazon search). */
 let remixItemPageTitle = null;
@@ -1070,6 +1072,86 @@ function needsNellisItemImageCarouselRefresh() {
   return false;
 }
 
+function normalizePhotoUrl(url) {
+  if (!url || typeof url !== 'string') {
+    return '';
+  }
+  try {
+    return new URL(url, window.location.href).toString();
+  } catch {
+    return '';
+  }
+}
+
+function getItemIdFromAuctionCard(card) {
+  const cardLink = card.querySelector(
+    'a[data-ax="item-card-title-link"], a[data-ax="item-card-image-link"]'
+  );
+  return parseNellisItemIdFromHref(cardLink?.getAttribute('href'));
+}
+
+function prefetchAuctionListPhotos(itemId, currentSrc = '') {
+  const photos = auctionListPhotosByItemId.get(itemId);
+  if (!photos || photos.length < 2) {
+    return;
+  }
+
+  const activeUrl = normalizePhotoUrl(currentSrc);
+  for (const photo of photos) {
+    const url = normalizePhotoUrl(photo);
+    if (!url || url === activeUrl || prefetchedAuctionPhotoUrls.has(url)) {
+      continue;
+    }
+
+    prefetchedAuctionPhotoUrls.add(url);
+    const image = new Image();
+    activeAuctionPhotoPrefetches.set(url, image);
+
+    const cleanup = () => {
+      activeAuctionPhotoPrefetches.delete(url);
+    };
+    const allowRetry = () => {
+      prefetchedAuctionPhotoUrls.delete(url);
+      cleanup();
+    };
+
+    image.addEventListener('load', cleanup, { once: true });
+    image.addEventListener('error', allowRetry, { once: true });
+    image.decoding = 'async';
+    image.src = url;
+  }
+}
+
+function prefetchAuctionListPhotosForCard(card) {
+  if (!(card instanceof HTMLElement)) {
+    return;
+  }
+
+  const itemId = getItemIdFromAuctionCard(card);
+  if (!itemId) {
+    return;
+  }
+
+  const image = card.querySelector(
+    `.${AUCTION_LIST_PHOTO_WRAP_CLASS} img, a[data-ax="item-card-image-link"] img`
+  );
+  const currentSrc =
+    image instanceof HTMLImageElement ? image.currentSrc || image.src || '' : '';
+  prefetchAuctionListPhotos(itemId, currentSrc);
+}
+
+function bindAuctionPhotoPrefetch(anchor) {
+  const card = anchor.closest('[data-ax="item-card-container"]') || anchor;
+  if (!(card instanceof HTMLElement) || card.dataset.nellisPhotoPrefetchBound === 'true') {
+    return;
+  }
+
+  const handlePrefetch = () => prefetchAuctionListPhotosForCard(card);
+  card.addEventListener('pointerenter', handlePrefetch);
+  card.addEventListener('focusin', handlePrefetch);
+  card.dataset.nellisPhotoPrefetchBound = 'true';
+}
+
 function attachNellisPhotoCarouselToAnchor(anchor, itemId, routeKey) {
   const photos = auctionListPhotosByItemId.get(itemId);
   if (!photos || photos.length < 2) {
@@ -1157,6 +1239,7 @@ function renderNellisItemImageCarousels(routeKey) {
     if (!itemId) {
       continue;
     }
+    bindAuctionPhotoPrefetch(anchor);
     attachNellisPhotoCarouselToAnchor(anchor, itemId, routeKey);
   }
 }
