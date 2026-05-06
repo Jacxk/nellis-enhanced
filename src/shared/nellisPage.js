@@ -21,12 +21,48 @@ const PRICE_SELECTORS = [
   '[data-testid*="price"]',
 ];
 
+const EXTENSION_UI_SELECTOR = '#nellis-amazon-compare-card';
+
 const NELLIS_ONLY_TITLE_PATTERNS = [
   /\bnellis variety box\b/i,
 ];
 
 export function isNellisItemPage(locationObject = window.location) {
   return isNellisAuctionSite(locationObject) && /^\/p\/[^/]+\/\d+/.test(locationObject.pathname);
+}
+
+export function parseNellisItemTitleFromPathname(pathname) {
+  if (!pathname || typeof pathname !== 'string') {
+    return '';
+  }
+  const match = pathname.match(/^\/p\/([^/]+)\/\d+/);
+  if (!match) {
+    return '';
+  }
+  try {
+    return decodeURIComponent(match[1])
+      .replace(/[-_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  } catch {
+    return match[1]
+      .replace(/[-_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+}
+
+export function parseNellisItemTitleFromDocumentTitle(title) {
+  const value = String(title || '').trim();
+  if (!value) {
+    return '';
+  }
+
+  return value
+    .replace(/\s+for sale\s+\|\s+.*$/i, '')
+    .replace(/\s+\|\s+Nellis Auction\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function extractNellisItem(root = document, { allowEmptyTitle = false } = {}) {
@@ -186,7 +222,9 @@ export function findItemDetailsAnchor(root = document) {
 
 function extractText(root, selectors) {
   for (const selector of selectors) {
-    const node = root.querySelector(selector);
+    const node = Array.from(root.querySelectorAll(selector)).find(
+      (candidate) => !candidate.closest(EXTENSION_UI_SELECTOR)
+    );
     const text = node?.textContent?.trim();
     if (text) {
       return text;
@@ -198,7 +236,9 @@ function extractText(root, selectors) {
 
 function extractImage(root, selectors) {
   for (const selector of selectors) {
-    const node = root.querySelector(selector);
+    const node = Array.from(root.querySelectorAll(selector)).find(
+      (candidate) => !candidate.closest(EXTENSION_UI_SELECTOR)
+    );
     const src = node?.getAttribute('src') || node?.src;
     if (src) {
       return src;

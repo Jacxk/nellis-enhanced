@@ -110,22 +110,46 @@ async function runProxiedNellisFetch({ url, method, headers, body }) {
 }
 
 /**
- * Amazon: retry + queue + dedupe (unchanged behavior from prior work).
+ * Amazon: timeout + retry + queue + dedupe.
  */
+const AMAZON_FETCH_TIMEOUT_MS = 15000;
+
 function createRetryingFetch({ maxRetries = 4, baseDelayMs = 2000 } = {}) {
   return async (resource, init) => {
     let lastResponse;
+    let lastError;
     for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-      lastResponse = await fetch(resource, init);
-      if (lastResponse.status !== 429) {
-        return lastResponse;
+      const timeoutController = new AbortController();
+      const timeoutId = setTimeout(() => timeoutController.abort(), AMAZON_FETCH_TIMEOUT_MS);
+
+      try {
+        lastResponse = await fetch(resource, {
+          ...init,
+          signal: timeoutController.signal,
+        });
+        lastError = undefined;
+
+        if (lastResponse.status !== 429) {
+          return lastResponse;
+        }
+        if (attempt >= maxRetries) {
+          return lastResponse;
+        }
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxRetries) {
+          throw error;
+        }
+      } finally {
+        clearTimeout(timeoutId);
       }
-      if (attempt >= maxRetries) {
-        return lastResponse;
-      }
+
       const backoff =
         baseDelayMs * 2 ** attempt + Math.floor(Math.random() * 500);
       await sleep(backoff);
+    }
+    if (lastError) {
+      throw lastError;
     }
     return lastResponse;
   };

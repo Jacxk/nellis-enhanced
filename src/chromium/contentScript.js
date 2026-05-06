@@ -22,6 +22,8 @@ import {
   isNellisCartPage,
   isNellisDashboardAuctionListPage,
   isNellisItemPage,
+  parseNellisItemTitleFromDocumentTitle,
+  parseNellisItemTitleFromPathname,
   isNellisSearchPage,
   isNellisSpotlightPage,
   isNellisOnlyItemTitle,
@@ -73,6 +75,9 @@ async function fetchNellisAsResponse(url, init = {}) {
 let activeRouteKey = '';
 let renderTimer = 0;
 let lookupSequence = 0;
+let amazonLookupInFlightKey = '';
+let amazonLookupRetryKey = '';
+let amazonLookupRetryAttempts = 0;
 let lastRenderedTitle = '';
 let pendingRouteKey = '';
 let pendingRouteAttempts = 0;
@@ -99,6 +104,7 @@ const activeAuctionPhotoPrefetches = new Map();
 let lastCartPickupsItems = [];
 /** Listing title from Remix loader for the current item page id (preferred over DOM for Amazon search). */
 let remixItemPageTitle = null;
+const AMAZON_RUNTIME_MESSAGE_TIMEOUT_MS = 12000;
 
 /**
  * Remix `fetch` runs in the page main world; the isolated content script cannot patch it.
@@ -180,6 +186,15 @@ document.addEventListener('nellis-enhanced-remix', (event) => {
   }
 });
 
+function requestEmbeddedRemixLoaderData() {
+  document.dispatchEvent(
+    new CustomEvent('nellis-enhanced-request-remix', {
+      bubbles: true,
+      composed: true,
+    })
+  );
+}
+
 // Content scripts are registered at document_start; running theme + CSS only from init()
 // (on DOMContentLoaded) lets the first paint happen in light mode before dark styles apply.
 applyStoredDarkMode();
@@ -196,6 +211,7 @@ function init() {
   applyStoredDarkMode();
   installDarkModeResyncListeners();
   installRouteListeners();
+  requestEmbeddedRemixLoaderData();
   scheduleRender();
 }
 
@@ -239,7 +255,7 @@ function installRouteListeners() {
     if (
       (isPurchasesPage() && !document.getElementById(PURCHASES_EXPORT_ID)) ||
       (isNellisCartPage() && needsCartBulkUiRefresh()) ||
-      (isNellisItemPage() && !document.getElementById(CARD_ID)) ||
+      needsAmazonComparisonRefresh() ||
       (isNellisAuctionSite() && needsDarkModeToggleRender()) ||
       needsNellisItemImageCarouselRefresh() ||
       needsWatchlistCountRefresh() ||
@@ -275,7 +291,7 @@ function installRouteListeners() {
       return;
     }
 
-    if (isNellisItemPage() && !document.getElementById(CARD_ID)) {
+    if (needsAmazonComparisonRefresh()) {
       scheduleRender();
       return;
     }
@@ -306,15 +322,101 @@ function scheduleRender() {
   renderTimer = window.setTimeout(renderPageFeatures, RENDER_DEBOUNCE_MS);
 }
 
+function needsAmazonComparisonRefresh() {
+  if (!isNellisItemPage()) {
+    return false;
+  }
+
+  const card = document.getElementById(CARD_ID);
+  if (!card) {
+    return true;
+  }
+
+  const state = card.dataset.compareState || '';
+  if (state === 'ready') {
+    return false;
+  }
+
+  const candidateTitle = buildNellisItemForAmazonCompare()?.title || '';
+  if (!candidateTitle) {
+    return false;
+  }
+
+  const lookupKey = `${window.location.pathname}${window.location.search}\n${candidateTitle}`;
+  // If the visible card is unresolved and no matching lookup is running, trigger one.
+  if (amazonLookupInFlightKey !== lookupKey) {
+    return true;
+  }
+
+  return candidateTitle !== lastRenderedTitle;
+}
+
+function scheduleAmazonLookupRetry(routeKey, title) {
+  const retryKey = `${routeKey}\n${title}`;
+  if (amazonLookupRetryKey !== retryKey) {
+    amazonLookupRetryKey = retryKey;
+    amazonLookupRetryAttempts = 0;
+  }
+
+  if (amazonLookupRetryAttempts >= 4) {
+    return false;
+  }
+
+  amazonLookupRetryAttempts += 1;
+  window.setTimeout(() => {
+    if (isNellisItemPage() && `${window.location.pathname}${window.location.search}` === routeKey) {
+      activeRouteKey = '';
+      scheduleRender();
+    }
+  }, 1500 * amazonLookupRetryAttempts);
+
+  return true;
+}
+
+function sendAmazonRuntimeMessage(message) {
+  let timeoutId = 0;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(`${message.type} timed out.`));
+    }, AMAZON_RUNTIME_MESSAGE_TIMEOUT_MS);
+  });
+
+  return Promise.race([sendRuntimeMessage(message), timeout]).finally(() => {
+    window.clearTimeout(timeoutId);
+  });
+}
+
+function isUsableNellisItemTitle(title) {
+  const normalized = String(title || '').trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return !new Set([
+    'amazon',
+    'nellis auction',
+    'item details',
+    'time left',
+    'current price',
+    'seller',
+    'pickup location',
+  ]).has(normalized);
+}
+
 /**
- * Prefer Remix loader title for Amazon search; fall back to DOM-scraped title.
+ * Prefer full item titles for Amazon search. The URL slug is only a last-resort
+ * fallback because it can omit important terms and produce Amazon "no results".
  */
 function buildNellisItemForAmazonCompare() {
   const pageId = parseNellisItemIdFromPathname(window.location.pathname);
   const dom = extractNellisItem(document, { allowEmptyTitle: true });
   const remixTitle =
     pageId && remixItemPageTitle?.itemId === pageId ? remixItemPageTitle.title.trim() : '';
-  const title = remixTitle || (dom?.title || '').trim();
+  const domTitle = isUsableNellisItemTitle(dom?.title) ? dom.title.trim() : '';
+  const documentTitle = isUsableNellisItemTitle(document.title)
+    ? parseNellisItemTitleFromDocumentTitle(document.title)
+    : '';
+  const urlTitle = parseNellisItemTitleFromPathname(window.location.pathname);
+  const title = remixTitle || domTitle || documentTitle || urlTitle;
   if (!title) {
     return null;
   }
@@ -427,13 +529,28 @@ async function renderComparisonCard(routeKey) {
   const titleChanged = nellisItem.title !== lastRenderedTitle;
   const routeChanged = routeKey !== activeRouteKey;
   const existingCard = document.getElementById(CARD_ID);
+  const existingState = existingCard?.dataset.compareState || '';
+  const lookupKey = `${routeKey}\n${nellisItem.title}`;
 
-  if (!titleChanged && !routeChanged && existingCard) {
+  if (!titleChanged && !routeChanged && existingCard && existingState === 'ready') {
+    return;
+  }
+
+  // Avoid thrashing on hard-load hydration: if a lookup for this exact
+  // route/title is already running, don't start another one.
+  if (amazonLookupInFlightKey === lookupKey) {
     return;
   }
 
   activeRouteKey = routeKey;
   lastRenderedTitle = nellisItem.title;
+  const retryKey = lookupKey;
+  if (amazonLookupRetryKey !== retryKey) {
+    amazonLookupRetryKey = retryKey;
+    amazonLookupRetryAttempts = 0;
+  }
+
+  amazonLookupInFlightKey = lookupKey;
 
   const card = ensureCard(itemDetailsAnchor);
   updateCardState(card, {
@@ -444,26 +561,44 @@ async function renderComparisonCard(routeKey) {
   const currentLookup = ++lookupSequence;
 
   try {
-    const response = await sendRuntimeMessage({
+    const response = await sendAmazonRuntimeMessage({
       type: 'FETCH_AMAZON_SEARCH_HTML',
       title: nellisItem.title,
     });
+
+    if (!response?.html) {
+      throw new Error('Amazon search returned no HTML.');
+    }
 
     const searchResultItem = getAmazonItemFromHtml(nellisItem.title, response?.html);
     let amazonItem = searchResultItem;
 
     if (searchResultItem?.url) {
-      const productResponse = await sendRuntimeMessage({
-        type: 'FETCH_AMAZON_PRODUCT_HTML',
-        url: searchResultItem.url,
+      if (currentLookup !== lookupSequence) {
+        return;
+      }
+
+      updateCardState(card, {
+        state: 'ready',
+        nellisItem,
+        amazonItem: searchResultItem,
       });
 
-      const productPageItem = parseAmazonProductPage(productResponse?.html, searchResultItem.url);
-      if (productPageItem) {
-        amazonItem = {
-          ...searchResultItem,
-          ...productPageItem,
-        };
+      try {
+        const productResponse = await sendAmazonRuntimeMessage({
+          type: 'FETCH_AMAZON_PRODUCT_HTML',
+          url: searchResultItem.url,
+        });
+
+        const productPageItem = parseAmazonProductPage(productResponse?.html, searchResultItem.url);
+        if (productPageItem) {
+          amazonItem = {
+            ...searchResultItem,
+            ...productPageItem,
+          };
+        }
+      } catch (error) {
+        console.warn('[NellisCompare] Failed to enrich Amazon item:', error);
       }
     }
 
@@ -476,10 +611,22 @@ async function renderComparisonCard(routeKey) {
       nellisItem,
       amazonItem: amazonItem || null,
     });
+
+    if (!hasRenderableAmazonItem(amazonItem)) {
+      scheduleAmazonLookupRetry(routeKey, nellisItem.title);
+    }
   } catch (error) {
     console.error('[NellisCompare] Failed to load Amazon item:', error);
 
     if (currentLookup !== lookupSequence) {
+      return;
+    }
+
+    if (scheduleAmazonLookupRetry(routeKey, nellisItem.title)) {
+      updateCardState(card, {
+        state: 'loading',
+        nellisItem,
+      });
       return;
     }
 
@@ -488,6 +635,10 @@ async function renderComparisonCard(routeKey) {
       nellisItem,
       amazonItem: null,
     });
+  } finally {
+    if (amazonLookupInFlightKey === lookupKey) {
+      amazonLookupInFlightKey = '';
+    }
   }
 }
 
@@ -547,6 +698,7 @@ function updateCardState(card, { state, nellisItem, amazonItem }) {
   const linkNode = card.querySelector('[data-role="link"]');
 
   if (state === 'loading') {
+    card.dataset.compareState = 'loading';
     bodyNode.hidden = true;
     statusNode.hidden = false;
     statusNode.textContent = 'Loading Amazon item...';
@@ -554,12 +706,14 @@ function updateCardState(card, { state, nellisItem, amazonItem }) {
   }
 
   if (state === 'empty' || !amazonItem?.url) {
+    card.dataset.compareState = 'empty';
     bodyNode.hidden = true;
     statusNode.hidden = false;
     statusNode.textContent = 'Amazon item unavailable.';
     return;
   }
 
+  card.dataset.compareState = 'ready';
   statusNode.hidden = true;
   bodyNode.hidden = false;
 
@@ -609,7 +763,17 @@ function applyNativeCardStyling(card, itemDetailsAnchor) {
 }
 
 function pickStyleValue(value, fallback) {
-  if (!value || value === 'rgba(0, 0, 0, 0)' || value === 'none' || value === 'normal') {
+  if (!value || value === 'none' || value === 'normal') {
+    return fallback;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (
+    normalized === 'transparent' ||
+    normalized === 'rgba(0, 0, 0, 0)' ||
+    normalized === 'rgba(0,0,0,0)' ||
+    /^rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0(?:\.0+)?\s*\)$/.test(normalized)
+  ) {
     return fallback;
   }
 
