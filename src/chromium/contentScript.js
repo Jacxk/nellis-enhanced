@@ -89,6 +89,7 @@ let cartBulkCheckoutInFlight = false;
 let cartSortObserver = null;
 let cartSortRaf = 0;
 let cartSortApplying = false;
+let cartSortPausedUntilMs = 0;
 let lastKnownUrl = window.location.href;
 /** Item id → formatted local time for “time left” hover (from Remix loaders or HTML fallback). */
 const closeTimeByItemId = new Map();
@@ -234,6 +235,7 @@ function installRouteListeners() {
   window.addEventListener('popstate', scheduleRender);
   window.addEventListener('pageshow', scheduleRender);
   window.addEventListener('load', scheduleRender);
+  installCartSortSubmissionGuard();
 
   const observer = new MutationObserver(() => {
     if (
@@ -299,6 +301,38 @@ function installRouteListeners() {
       scheduleRender();
     }
   }, ROUTE_WATCH_INTERVAL_MS);
+}
+
+function pauseCartSorting(ms = 5000) {
+  cartSortPausedUntilMs = Math.max(cartSortPausedUntilMs, Date.now() + ms);
+}
+
+function isCartSortingPaused() {
+  return Date.now() < cartSortPausedUntilMs;
+}
+
+function installCartSortSubmissionGuard() {
+  if (window.__nellisCartSortSubmissionGuardInstalled) {
+    return;
+  }
+  window.__nellisCartSortSubmissionGuardInstalled = true;
+
+  document.addEventListener(
+    'submit',
+    (event) => {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) {
+        return;
+      }
+      const action = form.getAttribute('action') || '';
+      if (!action.includes('/dashboard/cart')) {
+        return;
+      }
+      // Prevent sort DOM shuffles from racing cart mutation submits.
+      pauseCartSorting(5000);
+    },
+    true
+  );
 }
 
 function scheduleRender() {
@@ -2244,6 +2278,9 @@ function applyCartSortToDom(sortKey) {
   if (!isCartPage()) {
     return;
   }
+  if (isCartSortingPaused()) {
+    return;
+  }
 
   const rows = Array.from(document.querySelectorAll('[data-ax="pickups-item-container"]')).filter(
     (n) => n instanceof HTMLElement
@@ -2527,6 +2564,39 @@ async function postCartPickupsFormForRow(row, actionValue, errorLabel) {
   }
 }
 
+function buildCartPickupsPostRequests(rows, actionValue) {
+  return rows.map((row) => {
+    const form = row.querySelector('form[action*="/dashboard/cart"]');
+    if (!(form instanceof HTMLFormElement)) {
+      throw new Error('Cart form not found for a selected row.');
+    }
+
+    const action = form.getAttribute('action');
+    if (!action) {
+      throw new Error('Cart form is missing an action URL.');
+    }
+
+    return {
+      actionUrl: new URL(action, window.location.origin).toString(),
+      body: buildCartFormPostBody(form, actionValue).toString(),
+    };
+  });
+}
+
+async function postCartPickupsFormFromSnapshot(actionUrl, body, errorLabel) {
+  const response = await fetchNellisAsResponse(actionUrl, {
+    method: 'POST',
+    headers: {
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+    },
+    body,
+  });
+  if (!response.ok) {
+    throw new Error(`${errorLabel} failed with status ${response.status}.`);
+  }
+}
+
 async function handleCartBulkSaveForLater() {
   if (cartBulkSaveInFlight) {
     return;
@@ -2542,6 +2612,7 @@ async function handleCartBulkSaveForLater() {
   }
 
   cartBulkSaveInFlight = true;
+  pauseCartSorting(8000);
   syncCartBulkToolbar();
 
   const saveBtn = document.querySelector(`#${CART_BULK_TOOLBAR_ID} [data-role="save"]`);
@@ -2550,9 +2621,10 @@ async function handleCartBulkSaveForLater() {
   }
 
   try {
+    const requests = buildCartPickupsPostRequests(selectedRows, 'save-for-later');
     let index = 0;
-    for (const row of selectedRows) {
-      await postCartPickupsFormForRow(row, 'save-for-later', 'Save for later');
+    for (const request of requests) {
+      await postCartPickupsFormFromSnapshot(request.actionUrl, request.body, 'Save for later');
       index += 1;
       if (saveBtn instanceof HTMLButtonElement) {
         saveBtn.textContent = `Saving… (${index}/${selectedRows.length})`;
@@ -2583,6 +2655,7 @@ async function handleCartBulkAddToCheckout() {
   }
 
   cartBulkCheckoutInFlight = true;
+  pauseCartSorting(8000);
   syncCartBulkCheckoutToolbar();
 
   const addBtn = document.querySelector(`#${CART_BULK_CHECKOUT_TOOLBAR_ID} [data-role="add-checkout"]`);
@@ -2591,9 +2664,10 @@ async function handleCartBulkAddToCheckout() {
   }
 
   try {
+    const requests = buildCartPickupsPostRequests(selectedRows, 'add-to-checkout');
     let index = 0;
-    for (const row of selectedRows) {
-      await postCartPickupsFormForRow(row, 'add-to-checkout', 'Add to checkout');
+    for (const request of requests) {
+      await postCartPickupsFormFromSnapshot(request.actionUrl, request.body, 'Add to checkout');
       index += 1;
       if (addBtn instanceof HTMLButtonElement) {
         addBtn.textContent = `Adding… (${index}/${selectedRows.length})`;
