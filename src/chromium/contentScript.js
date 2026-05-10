@@ -1960,7 +1960,13 @@ function parseCartDateMs(value) {
 }
 
 function getCartRowKeyFromItem(item) {
-  const buyNowId = item?.buyNowId ?? item?.buynowId ?? item?.buynowId;
+  const buyNowId =
+    item?.buyNowId ??
+    item?.buynowId ??
+    item?.buyNow?.id ??
+    item?.buy_now_id ??
+    item?.id ??
+    item?.itemId;
   return buyNowId == null ? '' : String(buyNowId);
 }
 
@@ -2009,6 +2015,67 @@ function buildCartItemDataIndex(items) {
     }
   }
   return map;
+}
+
+function normalizeCartText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getCartItemTitle(item) {
+  return String(
+    item?.leadDescription || item?.title || item?.itemTitle || item?.productTitle || item?.description || ''
+  );
+}
+
+function buildCartItemTitleIndex(items) {
+  const map = new Map();
+  for (const item of items) {
+    const norm = normalizeCartText(getCartItemTitle(item));
+    if (!norm) {
+      continue;
+    }
+    const bucket = map.get(norm);
+    if (bucket) {
+      bucket.push(item);
+    } else {
+      map.set(norm, [item]);
+    }
+  }
+  return map;
+}
+
+function extractCartRowTitle(row) {
+  const titleEl =
+    row.querySelector('a[href*="/p/"] p') ||
+    row.querySelector('a[aria-label*="Visit the product page"] p');
+  return titleEl?.textContent?.trim() || '';
+}
+
+function extractCartRowAmount(row) {
+  const feeHint = row.querySelector('[data-premium-source-amount]');
+  if (feeHint instanceof HTMLElement) {
+    const raw = feeHint.dataset.premiumSourceAmount;
+    const amount = Number(raw);
+    if (Number.isFinite(amount)) {
+      return amount;
+    }
+  }
+
+  const priceText = row.querySelector('.text-body-md, p')?.textContent || '';
+  const parsed = parseCurrencyAmount(priceText);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function extractCartRowDateWonMs(row) {
+  const text = row.textContent || '';
+  const match = text.match(/\bwon\b[:\s-]*([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?)/i);
+  if (!match?.[1]) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  return parseCartDateMs(match[1]);
 }
 
 const CART_SORT_OPTIONS = [
@@ -2191,33 +2258,74 @@ function applyCartSortToDom(sortKey) {
   }
 
   const index = buildCartItemDataIndex(lastCartPickupsItems || []);
+  const titleIndex = buildCartItemTitleIndex(lastCartPickupsItems || []);
+  const rowSortValueCache = new WeakMap();
   const getDataForRow = (row) => {
-    const key = getCartRowKeyFromRow(row);
-    if (key && index.has(key)) {
-      return index.get(key);
+    if (rowSortValueCache.has(row)) {
+      return rowSortValueCache.get(row);
     }
-    return null;
+
+    const key = getCartRowKeyFromRow(row);
+    let data = key && index.has(key) ? index.get(key) : null;
+    if (!data) {
+      const rowTitle = extractCartRowTitle(row);
+      const bucket = titleIndex.get(normalizeCartText(rowTitle));
+      if (bucket?.length) {
+        if (bucket.length === 1) {
+          data = bucket[0];
+        } else {
+          const rowAmount = extractCartRowAmount(row);
+          data = bucket.reduce((best, candidate) => {
+            if (!best) {
+              return candidate;
+            }
+            const bestDelta = Math.abs((Number(best?.amount) || 0) - rowAmount);
+            const candidateDelta = Math.abs((Number(candidate?.amount) || 0) - rowAmount);
+            return candidateDelta < bestDelta ? candidate : best;
+          }, null);
+        }
+      }
+    }
+
+    const resolved = {
+      dateWonMs: parseCartDateMs(data?.dateWon),
+      amount: Number(data?.amount),
+      title: getCartItemTitle(data),
+    };
+
+    if (!Number.isFinite(resolved.dateWonMs) || resolved.dateWonMs === Number.NEGATIVE_INFINITY) {
+      resolved.dateWonMs = extractCartRowDateWonMs(row);
+    }
+    if (!Number.isFinite(resolved.amount)) {
+      resolved.amount = extractCartRowAmount(row);
+    }
+    if (!resolved.title) {
+      resolved.title = extractCartRowTitle(row);
+    }
+
+    rowSortValueCache.set(row, resolved);
+    return resolved;
   };
 
   const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
   const comparator = (aRow, bRow) => {
-    const a = getDataForRow(aRow) || {};
-    const b = getDataForRow(bRow) || {};
+    const a = getDataForRow(aRow);
+    const b = getDataForRow(bRow);
 
     switch (sortKey) {
       case 'dateWon_asc':
-        return parseCartDateMs(a.dateWon) - parseCartDateMs(b.dateWon);
+        return a.dateWonMs - b.dateWonMs;
       case 'amount_desc':
-        return (Number(b.amount) || 0) - (Number(a.amount) || 0);
+        return b.amount - a.amount;
       case 'amount_asc':
-        return (Number(a.amount) || 0) - (Number(b.amount) || 0);
+        return a.amount - b.amount;
       case 'title_az':
-        return collator.compare(String(a.leadDescription || ''), String(b.leadDescription || ''));
+        return collator.compare(a.title, b.title);
       case 'title_za':
-        return collator.compare(String(b.leadDescription || ''), String(a.leadDescription || ''));
+        return collator.compare(b.title, a.title);
       case 'dateWon_desc':
       default:
-        return parseCartDateMs(b.dateWon) - parseCartDateMs(a.dateWon);
+        return b.dateWonMs - a.dateWonMs;
     }
   };
 
