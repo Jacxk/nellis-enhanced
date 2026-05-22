@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nellis Enhanced",
-  "version": "2026.4.6",
+  "version": "2026.4.27",
   "description": "Nellis enhanced browser extension",
   "permissions": ["notifications", "alarms", "storage"],
   "host_permissions": [
@@ -19,10 +19,17 @@
         "https://www.nellisauction.com/*",
         "https://nellisauction.com/*"
       ],
-      "js": [
-        "contentScript.bundle.js"
+      "js": ["pageWorldFetchBridge.bundle.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.nellisauction.com/*",
+        "https://nellisauction.com/*"
       ],
-      "run_at": "document_idle"
+      "js": ["contentScript.bundle.js"],
+      "run_at": "document_start"
     }
   ],
   "icons": {

@@ -8,10 +8,219 @@ const THREE_MINUTES_MS = 3 * 60 * 1000;
 const ACTIVE_AUCTIONS_URL = 'https://nellisauction.com/dashboard/auctions/active';
 const OUTBID_AUCTIONS_URL = 'https://nellisauction.com/dashboard/auctions/outbid';
 
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+const NELLIS_HOST_SUFFIXES = ['nellisauction.com', 'www.nellisauction.com'];
+
+function isAllowedNellisUrl(urlString) {
+  try {
+    const u = new URL(urlString);
+    if (u.protocol !== 'https:') {
+      return false;
+    }
+    return NELLIS_HOST_SUFFIXES.includes(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/** Normalize host for dedupe so www vs apex share one in-flight GET. */
+function nellisDedupeUrlKey(urlString) {
+  const u = new URL(urlString);
+  const host = u.hostname.replace(/^www\./, '');
+  return `${u.protocol}//${host}${u.pathname}${u.search}`;
+}
+
+async function fetchNellisWith429Retry(url, init, { maxRetries = 5, baseDelayMs = 1500 } = {}) {
+  let lastResponse;
+  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    lastResponse = await fetch(url, {
+      ...init,
+      credentials: 'include',
+      redirect: 'follow',
+    });
+    if (lastResponse.status !== 429) {
+      return lastResponse;
+    }
+    if (attempt >= maxRetries) {
+      return lastResponse;
+    }
+    const backoff =
+      baseDelayMs * 2 ** attempt + Math.floor(Math.random() * 400);
+    await sleep(backoff);
+  }
+  return lastResponse;
+}
+
+/** @type {Map<string, Promise<{ ok: boolean; status: number; statusText: string; bodyText: string }>>} */
+const nellisGetInflight = new Map();
+
+let nellisQueueTail = Promise.resolve();
+
+const NELLIS_MIN_GAP_MS = 180;
+
+function enqueueNellisRequest(fn) {
+  const run = nellisQueueTail.then(async () => {
+    try {
+      return await fn();
+    } finally {
+      await sleep(NELLIS_MIN_GAP_MS);
+    }
+  });
+  nellisQueueTail = run.catch(() => {});
+  return run;
+}
+
+const ALLOWED_NELLIS_METHODS = new Set(['GET', 'POST', 'HEAD']);
+
+async function runProxiedNellisFetch({ url, method, headers, body }) {
+  if (!isAllowedNellisUrl(url)) {
+    throw new Error('Blocked Nellis proxy URL.');
+  }
+  const m = ALLOWED_NELLIS_METHODS.has(method) ? method : 'GET';
+  const fetchInit = {
+    method: m,
+    headers: headers && typeof headers === 'object' ? headers : undefined,
+    body: m === 'GET' || m === 'HEAD' ? undefined : body,
+  };
+
+  const work = async () => {
+    const response = await fetchNellisWith429Retry(url, fetchInit);
+    const bodyText = await response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText || '',
+      bodyText,
+    };
+  };
+
+  if (m === 'GET' || m === 'HEAD') {
+    const key = `${m}:${nellisDedupeUrlKey(url)}`;
+    const existing = nellisGetInflight.get(key);
+    if (existing) {
+      return existing;
+    }
+    const p = enqueueNellisRequest(work).finally(() => {
+      if (nellisGetInflight.get(key) === p) {
+        nellisGetInflight.delete(key);
+      }
+    });
+    nellisGetInflight.set(key, p);
+    return p;
+  }
+
+  return enqueueNellisRequest(work);
+}
+
+/**
+ * Amazon: timeout + retry + queue + dedupe.
+ */
+const AMAZON_FETCH_TIMEOUT_MS = 15000;
+
+function createRetryingFetch({ maxRetries = 4, baseDelayMs = 2000 } = {}) {
+  return async (resource, init) => {
+    let lastResponse;
+    let lastError;
+    for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+      const timeoutController = new AbortController();
+      const timeoutId = setTimeout(() => timeoutController.abort(), AMAZON_FETCH_TIMEOUT_MS);
+
+      try {
+        lastResponse = await fetch(resource, {
+          ...init,
+          signal: timeoutController.signal,
+        });
+        lastError = undefined;
+
+        if (lastResponse.status !== 429) {
+          return lastResponse;
+        }
+        if (attempt >= maxRetries) {
+          return lastResponse;
+        }
+      } catch (error) {
+        lastError = error;
+        if (attempt >= maxRetries) {
+          throw error;
+        }
+      } finally {
+        clearTimeout(timeoutId);
+      }
+
+      const backoff =
+        baseDelayMs * 2 ** attempt + Math.floor(Math.random() * 500);
+      await sleep(backoff);
+    }
+    if (lastError) {
+      throw lastError;
+    }
+    return lastResponse;
+  };
+}
+
+const retryingFetch = createRetryingFetch();
+
+/** @type {Map<string, Promise<unknown>>} */
+const amazonInflight = new Map();
+
+let amazonQueueTail = Promise.resolve();
+
+const AMAZON_MIN_GAP_MS = 700;
+
+function enqueueAmazonRequest(fn) {
+  const run = amazonQueueTail.then(async () => {
+    try {
+      return await fn();
+    } finally {
+      await sleep(AMAZON_MIN_GAP_MS);
+    }
+  });
+  amazonQueueTail = run.catch(() => {});
+  return run;
+}
+
+function normalizeAmazonTitle(title) {
+  return typeof title === 'string' ? title.trim().replace(/\s+/g, ' ') : '';
+}
+
+function getAmazonDedupeKey(type, message) {
+  if (type === 'FETCH_AMAZON_SEARCH_HTML') {
+    const t = normalizeAmazonTitle(message.title);
+    return `search:${t}`;
+  }
+  if (type === 'FETCH_AMAZON_PRODUCT_HTML') {
+    const u = typeof message.url === 'string' ? message.url.trim() : '';
+    return `product:${u}`;
+  }
+  return '';
+}
+
+function runDedupedAmazon(type, message, work) {
+  const key = getAmazonDedupeKey(type, message);
+  const existing = amazonInflight.get(key);
+  if (existing) {
+    return existing;
+  }
+  const p = enqueueAmazonRequest(work).finally(() => {
+    if (amazonInflight.get(key) === p) {
+      amazonInflight.delete(key);
+    }
+  });
+  amazonInflight.set(key, p);
+  return p;
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (
     message?.type !== 'FETCH_AMAZON_SEARCH_HTML' &&
     message?.type !== 'FETCH_AMAZON_PRODUCT_HTML' &&
+    message?.type !== 'FETCH_NELLIS' &&
     message?.type !== 'FETCH_PURCHASES_PAGE' &&
     message?.type !== 'POST_NOTIFICATION' &&
     message?.type !== 'GET_NOTIFICATION_PERMISSION_LEVEL' &&
@@ -21,29 +230,55 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   (async () => {
-    const payload =
-      message?.type === 'FETCH_AMAZON_PRODUCT_HTML'
-        ? await fetchAmazonHtml(typeof message.url === 'string' ? message.url : '')
-        : message?.type === 'FETCH_PURCHASES_PAGE'
-          ? await fetchPurchasesPage({
-              page: Number.isInteger(message.page) ? message.page : 0,
-              size: Number.isInteger(message.size) ? message.size : 30,
-            })
-          : message?.type === 'POST_NOTIFICATION'
-            ? await postBrowserNotification(message)
-            : message?.type === 'GET_NOTIFICATION_PERMISSION_LEVEL'
-              ? await getNotificationPermissionLevel()
-              : message?.type === 'SET_AUCTION_NOTIFICATIONS_ENABLED'
-                ? await setAuctionNotificationsEnabled({
-                    enabled: Boolean(message?.enabled),
-                    outbidEnabled: Boolean(message?.outbidEnabled),
-                  })
-            : await fetchAmazonSearchHtml(typeof message.title === 'string' ? message.title : '');
+    if (message?.type === 'FETCH_NELLIS') {
+      const url = typeof message.url === 'string' ? message.url : '';
+      const method =
+        typeof message.method === 'string' ? message.method.toUpperCase() : 'GET';
+      const payload = await runProxiedNellisFetch({
+        url,
+        method,
+        headers: message.headers,
+        body: message.body,
+      });
+      sendResponse(payload);
+      return;
+    }
+
+    let payload;
+    if (message?.type === 'FETCH_AMAZON_PRODUCT_HTML') {
+      const url = typeof message.url === 'string' ? message.url : '';
+      payload = await runDedupedAmazon(message.type, message, () =>
+        fetchAmazonHtml(url, { fetchImpl: retryingFetch })
+      );
+    } else if (message?.type === 'FETCH_AMAZON_SEARCH_HTML') {
+      const title = typeof message.title === 'string' ? message.title : '';
+      payload = await runDedupedAmazon(message.type, message, () =>
+        fetchAmazonSearchHtml(title, { fetchImpl: retryingFetch })
+      );
+    } else if (message?.type === 'FETCH_PURCHASES_PAGE') {
+      payload = await fetchPurchasesPage({
+        page: Number.isInteger(message.page) ? message.page : 0,
+        size: Number.isInteger(message.size) ? message.size : 30,
+      });
+    } else if (message?.type === 'POST_NOTIFICATION') {
+      payload = await postBrowserNotification(message);
+    } else if (message?.type === 'GET_NOTIFICATION_PERMISSION_LEVEL') {
+      payload = await getNotificationPermissionLevel();
+    } else if (message?.type === 'SET_AUCTION_NOTIFICATIONS_ENABLED') {
+      payload = await setAuctionNotificationsEnabled({
+        enabled: Boolean(message?.enabled),
+        outbidEnabled: Boolean(message?.outbidEnabled),
+      });
+    }
 
     sendResponse(payload);
   })().catch((error) => {
     console.error('[NellisCompare] Background lookup error:', error);
-    sendResponse({ html: null, searchUrl: null, data: null, error: String(error) });
+    if (message?.type === 'FETCH_NELLIS') {
+      sendResponse({ error: String(error) });
+    } else {
+      sendResponse({ html: null, searchUrl: null, data: null, error: String(error) });
+    }
   });
 
   return true;

@@ -13,11 +13,13 @@ This file is a condensed, high-signal handoff for future coding agents.
 ## Repo structure (high-level)
 
 - `src/chromium/`
-  - `contentScript.js`: primary injection point (DOM mutations, UI insertion, dark mode, styles)
+  - `contentScript.js`: primary injection point (DOM mutations, UI insertion, dark mode orchestration)
   - `background.js`: background logic (if any)
   - `manifest.json`: extension manifest
 - `src/shared/`
   - `nellisPage.js`: page detection + DOM extraction helpers (selectors, parsing)
+  - `nellisUiConstants.js`: DOM ids/classes, timing, and other UI constants for injected Nellis UI
+  - `nellisInjectedStyles.js`: `injectStyles()` — single `<style>` tag (comparison card, toolbars, dark mode CSS)
   - `amazonSource.js`: Amazon lookup (intentionally isolated for replacement)
   - `productMatcher.js`: title matching
   - `extensionApi.js`: shared extension API helpers
@@ -85,7 +87,7 @@ Most behavior lives in `src/chromium/contentScript.js`:
 
 - Creates/inserts UI
 - Watches for SPA navigation/DOM changes
-- Injects a single `<style>` tag (dark mode + component styling)
+- Calls `injectStyles()` from `src/shared/nellisInjectedStyles.js`, which appends one `<style>` tag (dark mode + component styling). Constants such as `STYLE_ID` live in `src/shared/nellisUiConstants.js`.
 
 ### Dark mode: key concepts
 
@@ -106,7 +108,7 @@ Most behavior lives in `src/chromium/contentScript.js`:
 
 ### Dark mode styling approach
 
-All styling is injected from inside `injectStyles()` as a single style tag (id tied to `STYLE_ID`).
+All styling is injected from `injectStyles()` in `nellisInjectedStyles.js` as a single style tag (id tied to `STYLE_ID` in `nellisUiConstants.js`).
 
 General strategy used throughout the CSS:
 
@@ -137,7 +139,7 @@ The injected CSS includes targeted overrides for:
 
 If you need to add a new fix:
 
-- Find the closest existing section in `injectStyles()` (Tailwind vs CSS-module vs semantic card).
+- Find the closest existing section in `nellisInjectedStyles.js` / `injectStyles()` (Tailwind vs CSS-module vs semantic card).
 - Add **minimal selectors** first; only broaden if you can’t catch all variants.
 - Prefer targeting by `data-ax="..."` attributes if available (more stable than CSS-module names).
 

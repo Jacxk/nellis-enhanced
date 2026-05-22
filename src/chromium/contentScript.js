@@ -1,28 +1,69 @@
 import {
+  extractNellisItemTitleFromRemixPayload,
+  formatNellisCloseTimeTooltip,
+  mergeAuctionListPhotoPayload,
+  mergeCloseTimeFromRemixPayload,
+  mergeNellisItemPagePhotoPayload,
+  mergeProductsPhotoPayload,
+  mergeWatchlistCountFromRemixPayload,
+  parseNellisItemIdFromHref,
+  parseNellisItemIdFromPathname,
+  shouldParseNellisAuctionRemixDataKey,
+  shouldParseNellisSearchRemixDataKey,
+  shouldParseNellisSpotlightRemixDataKey,
+} from '../shared/nellisAuctionListPhotos.js';
+import {
   extractNellisItem,
   findNellisPriceTargets,
   findNellisTimeTargets,
   findItemDetailsAnchor,
-  findTitleDescriptionAnchor,
   hasNellisPriceCards,
   isNellisAuctionSite,
+  isNellisCartPage,
+  isNellisDashboardAuctionListPage,
   isNellisItemPage,
+  parseNellisItemTitleFromDocumentTitle,
+  parseNellisItemTitleFromPathname,
+  isNellisSearchPage,
+  isNellisSpotlightPage,
   isNellisOnlyItemTitle,
   parseCurrencyAmount,
 } from '../shared/nellisPage.js';
-import { sendRuntimeMessage } from '../shared/extensionApi.js';
+import { fetchNellisViaBackground, sendRuntimeMessage } from '../shared/extensionApi.js';
 import { getAmazonItemFromHtml } from '../shared/amazonSource.js';
 import { parseAmazonProductPage } from '../shared/productMatcher.js';
+import {
+  AUCTION_LIST_PHOTO_BAR_CLASS,
+  AUCTION_LIST_PHOTO_WRAP_CLASS,
+  BID_TOTAL_HINT_CLASS,
+  BUYER_PREMIUM_RATE,
+  CARD_ID,
+  CART_BULK_CHECKOUT_TOOLBAR_ID,
+  CART_BULK_TOOLBAR_ID,
+  CART_SORT_DROPDOWN_ID,
+  CART_SORT_STORAGE_KEY,
+  CART_ITEM_FEE_HINT_CLASS,
+  DARK_MODE_CRITICAL_STYLE_ID,
+  DARK_MODE_HTML_CLASS,
+  DARK_MODE_ICON_MOON,
+  DARK_MODE_ICON_SUN,
+  DARK_MODE_STORAGE_KEY,
+  DARK_MODE_TOGGLE_CLASS,
+  DARK_MODE_TOGGLE_ID,
+  MAX_RENDER_RETRIES,
+  PREMIUM_HINT_CLASS,
+  PURCHASES_EXPORT_ID,
+  PURCHASES_PAGE_SIZE,
+  RECEIPTS_PAGE_SIZE,
+  RECEIPTS_SUMMARY_ID,
+  RENDER_DEBOUNCE_MS,
+  RENDER_RETRY_MS,
+  ROUTE_WATCH_INTERVAL_MS,
+  TIME_HINT_CLASS,
+  WATCHLIST_COUNT_CLASS,
+} from '../shared/nellisUiConstants.js';
+import { injectStyles } from '../shared/nellisInjectedStyles.js';
 
-const CARD_ID = 'nellis-amazon-compare-card';
-const STYLE_ID = 'nellis-amazon-compare-style';
-const PREMIUM_HINT_CLASS = 'nellis-premium-hint';
-const TIME_HINT_CLASS = 'nellis-time-hint';
-const PURCHASES_EXPORT_ID = 'nellis-purchases-export';
-const DARK_MODE_TOGGLE_CLASS = 'nellis-dark-mode-toggle';
-const DARK_MODE_TOGGLE_ID = 'nellis-dark-mode-toggle';
-const DARK_MODE_HTML_CLASS = 'nellis-dark-mode';
-const DARK_MODE_STORAGE_KEY = 'nellisAuctionDarkMode';
 const NOTIFICATIONS_SECTION_CLASS = 'nellis-notifications-section';
 const NOTIFICATIONS_SECTION_ID = 'nellis-notifications-section';
 const NOTIFICATIONS_TOGGLE_CLASS = 'nellis-notifications-toggle';
@@ -31,45 +72,179 @@ const NOTIFICATIONS_STORAGE_KEY = 'nellisAuctionNotificationsEnabled';
 const OUTBID_TOGGLE_CLASS = 'nellis-outbid-notifications-toggle';
 const OUTBID_TOGGLE_ID = 'nellis-outbid-notifications-toggle';
 const OUTBID_STORAGE_KEY = 'nellisAuctionOutbidNotificationsEnabled';
-const BID_TOTAL_HINT_CLASS = 'nellis-bid-total-hint';
-const DARK_MODE_ICON_MOON =
-  '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" width="17" height="17" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" /></svg>';
-const DARK_MODE_ICON_SUN =
-  '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.75" stroke="currentColor" width="17" height="17" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" /></svg>';
-const NOTIFICATIONS_ICON_BELL =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.45-2h-4.9A2.5 2.5 0 0 0 12 22Zm7-6V11a7 7 0 0 0-5-6.71V3a2 2 0 1 0-4 0v1.29A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2Z"/></svg>';
-const NOTIFICATIONS_ICON_BELL_OFF =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="17" height="17" aria-hidden="true"><path fill="currentColor" d="M2.1 3.51 3.51 2.1l18.38 18.38-1.41 1.41-2.07-2.07H3v-1l2-2v-5c0-.98.2-1.92.56-2.78L2.1 3.51Zm14.72 14.72L7.06 8.47C6.73 9.23 6.55 10.1 6.55 11v5l-1.5 1.5h11.77ZM9.8 20a2.5 2.5 0 0 0 4.4 0H9.8Zm6.85-6.85-.99-.99V11c0-1.85-.83-3.51-2.14-4.62V3a2 2 0 0 0-2.31-1.97l-.7-.7A3.49 3.49 0 0 1 14 3v1.29A7 7 0 0 1 19 11v5l-2.17-2.17Z"/></svg>';
-const RENDER_DEBOUNCE_MS = 250;
-const MAX_RENDER_RETRIES = 20;
-const RENDER_RETRY_MS = 400;
-const PURCHASES_PAGE_SIZE = 30;
-const ROUTE_WATCH_INTERVAL_MS = 500;
-const BUYER_PREMIUM_RATE = 0.15;
+
+async function fetchNellisAsResponse(url, init = {}) {
+  const parsed = await fetchNellisViaBackground(url, init);
+  return new Response(parsed.bodyText, {
+    status: parsed.status,
+    statusText: parsed.statusText || '',
+  });
+}
 
 let activeRouteKey = '';
 let renderTimer = 0;
 let lookupSequence = 0;
+let amazonLookupInFlightKey = '';
+let amazonLookupRetryKey = '';
+let amazonLookupRetryAttempts = 0;
 let lastRenderedTitle = '';
 let pendingRouteKey = '';
 let pendingRouteAttempts = 0;
 let purchasesExportInFlight = false;
 let purchasesRouteKey = '';
 let purchasesRenderAttempts = 0;
+let receiptsRouteKey = '';
+let receiptsRenderAttempts = 0;
+let receiptsSummaryInFlight = false;
+let cartBulkRouteKey = '';
+let cartBulkRenderAttempts = 0;
+let cartBulkSaveInFlight = false;
+let cartBulkCheckoutInFlight = false;
+let cartSortObserver = null;
+let cartSortRaf = 0;
+let cartSortApplying = false;
+let cartSortPausedUntilMs = 0;
 let lastKnownUrl = window.location.href;
+/** Item id → formatted local time for “time left” hover (from Remix loaders or HTML fallback). */
+const closeTimeByItemId = new Map();
+const watchlistCountByItemId = new Map();
+const auctionListPhotosByItemId = new Map();
+const prefetchedAuctionPhotoUrls = new Set();
+const activeAuctionPhotoPrefetches = new Map();
+let lastCartPickupsItems = [];
+/** Listing title from Remix loader for the current item page id (preferred over DOM for Amazon search). */
+let remixItemPageTitle = null;
+const AMAZON_RUNTIME_MESSAGE_TIMEOUT_MS = 12000;
 const closeTimeCache = new Map();
 let activeAuctionsPoller = 0;
 const activeAuctionsLastSecondsByItem = new Map();
 const activeAuctionsNotifiedItems = new Set();
 
-init();
+/**
+ * Remix `fetch` runs in the page main world; the isolated content script cannot patch it.
+ * `pageWorldFetchBridge.bundle.js` (MAIN world, document_start) patches `fetch` and dispatches
+ * `nellis-enhanced-remix` on `document` with `{ dataKey, json }`.
+ */
+function shouldParseRemixLoaderDataKey(dataKey) {
+  if (shouldParseNellisAuctionRemixDataKey(dataKey)) {
+    return true;
+  }
+  if (shouldParseNellisSearchRemixDataKey(dataKey)) {
+    return true;
+  }
+  if (shouldParseNellisSpotlightRemixDataKey(dataKey)) {
+    return true;
+  }
+  if (isNellisItemPage()) {
+    return true;
+  }
+  if (isNellisCartPage()) {
+    return true;
+  }
+  if (isNellisDashboardAuctionListPage()) {
+    return true;
+  }
+  if (isNellisSearchPage()) {
+    return true;
+  }
+  if (isNellisSpotlightPage()) {
+    return true;
+  }
+  return false;
+}
+
+function handleRemixLoaderPayload(json, dataKey) {
+  if (!shouldParseRemixLoaderDataKey(dataKey)) {
+    return;
+  }
+
+  let changed = mergeAuctionListPhotoPayload(json, auctionListPhotosByItemId);
+  changed = mergeProductsPhotoPayload(json, auctionListPhotosByItemId) || changed;
+  changed = mergeCloseTimeFromRemixPayload(json, closeTimeByItemId) || changed;
+  changed = mergeWatchlistCountFromRemixPayload(json, watchlistCountByItemId) || changed;
+  if (isCartPage()) {
+    const maybeItems = getCartPickUpsItemsFromRemixPayload(json);
+    if (maybeItems) {
+      lastCartPickupsItems = maybeItems;
+      applyCartSortToDom(getStoredCartSortKey());
+    }
+  }
+  if (isNellisItemPage()) {
+    const pageId = parseNellisItemIdFromPathname(window.location.pathname);
+    if (pageId) {
+      changed = mergeNellisItemPagePhotoPayload(json, pageId, auctionListPhotosByItemId) || changed;
+      const remixTitle = extractNellisItemTitleFromRemixPayload(json, pageId);
+      if (remixTitle) {
+        const prev = remixItemPageTitle;
+        if (prev?.itemId !== pageId || prev?.title !== remixTitle) {
+          remixItemPageTitle = { itemId: pageId, title: remixTitle };
+          changed = true;
+        }
+      }
+    }
+  }
+  if (changed) {
+    scheduleRender();
+  }
+}
+
+document.addEventListener('nellis-enhanced-remix', (event) => {
+  const detail = event?.detail;
+  if (!detail || detail.json === undefined || !detail.dataKey) {
+    return;
+  }
+  try {
+    handleRemixLoaderPayload(detail.json, detail.dataKey);
+  } catch (err) {
+    console.warn('[NellisEnhanced] remix loader handler error:', err);
+  }
+});
+
+function requestEmbeddedRemixLoaderData() {
+  document.dispatchEvent(
+    new CustomEvent('nellis-enhanced-request-remix', {
+      bubbles: true,
+      composed: true,
+    })
+  );
+}
+
+// Content scripts are registered at document_start; running theme + CSS only from init()
+// (on DOMContentLoaded) lets the first paint happen in light mode before dark styles apply.
+applyStoredDarkMode();
+injectStyles();
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init, { once: true });
+} else {
+  init();
+}
 
 function init() {
   injectStyles();
   applyStoredDarkMode();
   cleanupActiveAuctionsNotifications();
+  installDarkModeResyncListeners();
   installRouteListeners();
+  requestEmbeddedRemixLoaderData();
   scheduleRender();
+}
+
+function installDarkModeResyncListeners() {
+  // Background/prerendered tabs can temporarily deny storage access. Re-apply on activation.
+  window.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      applyStoredDarkMode();
+      syncDarkModeToggleButtons();
+      refreshComparisonCardStyling();
+    }
+  });
+
+  window.addEventListener('pageshow', () => {
+    applyStoredDarkMode();
+    syncDarkModeToggleButtons();
+    refreshComparisonCardStyling();
+  });
 }
 
 function installRouteListeners() {
@@ -90,12 +265,16 @@ function installRouteListeners() {
   window.addEventListener('popstate', scheduleRender);
   window.addEventListener('pageshow', scheduleRender);
   window.addEventListener('load', scheduleRender);
+  installCartSortSubmissionGuard();
 
   const observer = new MutationObserver(() => {
     if (
       (isPurchasesPage() && !document.getElementById(PURCHASES_EXPORT_ID)) ||
-      (isNellisItemPage() && !document.getElementById(CARD_ID)) ||
+      (isNellisCartPage() && needsCartBulkUiRefresh()) ||
+      needsAmazonComparisonRefresh() ||
       (isNellisAuctionSite() && needsDarkModeToggleRender()) ||
+      needsNellisItemImageCarouselRefresh() ||
+      needsWatchlistCountRefresh() ||
       hasTooltipRefreshTargets() ||
       hasBidTotalHintRefreshTargets()
     ) {
@@ -123,12 +302,27 @@ function installRouteListeners() {
       return;
     }
 
-    if (isNellisItemPage() && !document.getElementById(CARD_ID)) {
+    if (isNellisCartPage() && needsCartBulkUiRefresh()) {
+      scheduleRender();
+      return;
+    }
+
+    if (needsAmazonComparisonRefresh()) {
       scheduleRender();
       return;
     }
 
     if (isNellisAuctionSite() && needsDarkModeToggleRender()) {
+      scheduleRender();
+      return;
+    }
+
+    if (needsNellisItemImageCarouselRefresh()) {
+      scheduleRender();
+      return;
+    }
+
+    if (needsWatchlistCountRefresh()) {
       scheduleRender();
       return;
     }
@@ -139,21 +333,198 @@ function installRouteListeners() {
   }, ROUTE_WATCH_INTERVAL_MS);
 }
 
+function pauseCartSorting(ms = 5000) {
+  cartSortPausedUntilMs = Math.max(cartSortPausedUntilMs, Date.now() + ms);
+}
+
+function isCartSortingPaused() {
+  return Date.now() < cartSortPausedUntilMs;
+}
+
+function installCartSortSubmissionGuard() {
+  if (window.__nellisCartSortSubmissionGuardInstalled) {
+    return;
+  }
+  window.__nellisCartSortSubmissionGuardInstalled = true;
+
+  document.addEventListener(
+    'submit',
+    (event) => {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) {
+        return;
+      }
+      const action = form.getAttribute('action') || '';
+      if (!action.includes('/dashboard/cart')) {
+        return;
+      }
+      // Prevent sort DOM shuffles from racing cart mutation submits.
+      pauseCartSorting(5000);
+    },
+    true
+  );
+}
+
 function scheduleRender() {
   window.clearTimeout(renderTimer);
   renderTimer = window.setTimeout(renderPageFeatures, RENDER_DEBOUNCE_MS);
 }
 
+function needsAmazonComparisonRefresh() {
+  if (!isNellisItemPage()) {
+    return false;
+  }
+
+  const card = document.getElementById(CARD_ID);
+  if (!card) {
+    return true;
+  }
+
+  const state = card.dataset.compareState || '';
+  if (state === 'ready') {
+    return false;
+  }
+
+  const candidateTitle = buildNellisItemForAmazonCompare()?.title || '';
+  if (!candidateTitle) {
+    return false;
+  }
+
+  const lookupKey = `${window.location.pathname}${window.location.search}\n${candidateTitle}`;
+  // If the visible card is unresolved and no matching lookup is running, trigger one.
+  if (amazonLookupInFlightKey !== lookupKey) {
+    return true;
+  }
+
+  return candidateTitle !== lastRenderedTitle;
+}
+
+function scheduleAmazonLookupRetry(routeKey, title) {
+  const retryKey = `${routeKey}\n${title}`;
+  if (amazonLookupRetryKey !== retryKey) {
+    amazonLookupRetryKey = retryKey;
+    amazonLookupRetryAttempts = 0;
+  }
+
+  if (amazonLookupRetryAttempts >= 4) {
+    return false;
+  }
+
+  amazonLookupRetryAttempts += 1;
+  window.setTimeout(() => {
+    if (isNellisItemPage() && `${window.location.pathname}${window.location.search}` === routeKey) {
+      activeRouteKey = '';
+      scheduleRender();
+    }
+  }, 1500 * amazonLookupRetryAttempts);
+
+  return true;
+}
+
+function sendAmazonRuntimeMessage(message) {
+  let timeoutId = 0;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(`${message.type} timed out.`));
+    }, AMAZON_RUNTIME_MESSAGE_TIMEOUT_MS);
+  });
+
+  return Promise.race([sendRuntimeMessage(message), timeout]).finally(() => {
+    window.clearTimeout(timeoutId);
+  });
+}
+
+function isUsableNellisItemTitle(title) {
+  const normalized = String(title || '').trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return !new Set([
+    'amazon',
+    'nellis auction',
+    'item details',
+    'time left',
+    'current price',
+    'seller',
+    'pickup location',
+  ]).has(normalized);
+}
+
+/**
+ * Prefer full item titles for Amazon search. The URL slug is only a last-resort
+ * fallback because it can omit important terms and produce Amazon "no results".
+ */
+function buildNellisItemForAmazonCompare() {
+  const pageId = parseNellisItemIdFromPathname(window.location.pathname);
+  const dom = extractNellisItem(document, { allowEmptyTitle: true });
+  const remixTitle =
+    pageId && remixItemPageTitle?.itemId === pageId ? remixItemPageTitle.title.trim() : '';
+  const domTitle = isUsableNellisItemTitle(dom?.title) ? dom.title.trim() : '';
+  const documentTitle = isUsableNellisItemTitle(document.title)
+    ? parseNellisItemTitleFromDocumentTitle(document.title)
+    : '';
+  const urlTitle = parseNellisItemTitleFromPathname(window.location.pathname);
+  const title = remixTitle || domTitle || documentTitle || urlTitle;
+  if (!title) {
+    return null;
+  }
+  return {
+    title,
+    imageSrc: dom?.imageSrc || '',
+    price: dom?.price || '',
+  };
+}
+
+/**
+ * Reserve the Amazon comparison slot as soon as Item Details is in the DOM so
+ * later injections (carousel controls, etc.) do not push the section downward first.
+ */
+function primeComparisonCardSlot() {
+  if (!isNellisItemPage()) {
+    return;
+  }
+
+  const anchor = findItemDetailsAnchor();
+  if (!anchor) {
+    return;
+  }
+
+  const nellisItem = buildNellisItemForAmazonCompare();
+  if (nellisItem?.title && isNellisOnlyItemTitle(nellisItem.title)) {
+    removeExistingCard();
+    return;
+  }
+
+  if (document.getElementById(CARD_ID)) {
+    return;
+  }
+
+  const card = ensureCard(anchor);
+  updateCardState(card, {
+    state: 'loading',
+    nellisItem: nellisItem?.title ? nellisItem : { title: '', imageSrc: '', price: '' },
+  });
+}
+
 async function renderPageFeatures() {
   const routeKey = `${window.location.pathname}${window.location.search}`;
   injectStyles();
+  applyStoredDarkMode();
+  if (isNellisItemPage()) {
+    primeComparisonCardSlot();
+  }
   renderPurchasesExportButton(routeKey);
+  renderReceiptsSummary(routeKey);
+  renderCartBulkUis(routeKey);
+  renderNellisItemImageCarousels(routeKey);
+  renderWatchlistCountBadges(routeKey);
   renderDarkModeToggleButtons();
   renderNotificationsToggleButtons();
   attachPricePremiumHint();
   attachBidTotalPremiumHint();
   attachTimeEndHint();
   syncActiveAuctionsNotifications(routeKey);
+  attachCartItemFeeHint();
 
   if (!isNellisItemPage()) {
     cleanupItemComparison(routeKey);
@@ -174,13 +545,23 @@ async function renderComparisonCard(routeKey) {
     pendingRouteAttempts = 0;
   }
 
-  const nellisItem = extractNellisItem();
-  const primaryAnchor = findTitleDescriptionAnchor() || findItemDetailsAnchor();
+  const itemDetailsAnchor = findItemDetailsAnchor();
+  const nellisItem = buildNellisItemForAmazonCompare();
 
-  if (!nellisItem?.title || !primaryAnchor) {
+  if (!itemDetailsAnchor) {
     if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
       pendingRouteAttempts += 1;
       window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    }
+    return;
+  }
+
+  if (!nellisItem?.title) {
+    if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
+      pendingRouteAttempts += 1;
+      window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    } else {
+      removeExistingCard();
     }
     return;
   }
@@ -198,15 +579,30 @@ async function renderComparisonCard(routeKey) {
   const titleChanged = nellisItem.title !== lastRenderedTitle;
   const routeChanged = routeKey !== activeRouteKey;
   const existingCard = document.getElementById(CARD_ID);
+  const existingState = existingCard?.dataset.compareState || '';
+  const lookupKey = `${routeKey}\n${nellisItem.title}`;
 
-  if (!titleChanged && !routeChanged && existingCard) {
+  if (!titleChanged && !routeChanged && existingCard && existingState === 'ready') {
+    return;
+  }
+
+  // Avoid thrashing on hard-load hydration: if a lookup for this exact
+  // route/title is already running, don't start another one.
+  if (amazonLookupInFlightKey === lookupKey) {
     return;
   }
 
   activeRouteKey = routeKey;
   lastRenderedTitle = nellisItem.title;
+  const retryKey = lookupKey;
+  if (amazonLookupRetryKey !== retryKey) {
+    amazonLookupRetryKey = retryKey;
+    amazonLookupRetryAttempts = 0;
+  }
 
-  const card = ensureCard(primaryAnchor);
+  amazonLookupInFlightKey = lookupKey;
+
+  const card = ensureCard(itemDetailsAnchor);
   updateCardState(card, {
     state: 'loading',
     nellisItem,
@@ -215,26 +611,44 @@ async function renderComparisonCard(routeKey) {
   const currentLookup = ++lookupSequence;
 
   try {
-    const response = await sendRuntimeMessage({
+    const response = await sendAmazonRuntimeMessage({
       type: 'FETCH_AMAZON_SEARCH_HTML',
       title: nellisItem.title,
     });
+
+    if (!response?.html) {
+      throw new Error('Amazon search returned no HTML.');
+    }
 
     const searchResultItem = getAmazonItemFromHtml(nellisItem.title, response?.html);
     let amazonItem = searchResultItem;
 
     if (searchResultItem?.url) {
-      const productResponse = await sendRuntimeMessage({
-        type: 'FETCH_AMAZON_PRODUCT_HTML',
-        url: searchResultItem.url,
+      if (currentLookup !== lookupSequence) {
+        return;
+      }
+
+      updateCardState(card, {
+        state: 'ready',
+        nellisItem,
+        amazonItem: searchResultItem,
       });
 
-      const productPageItem = parseAmazonProductPage(productResponse?.html, searchResultItem.url);
-      if (productPageItem) {
-        amazonItem = {
-          ...searchResultItem,
-          ...productPageItem,
-        };
+      try {
+        const productResponse = await sendAmazonRuntimeMessage({
+          type: 'FETCH_AMAZON_PRODUCT_HTML',
+          url: searchResultItem.url,
+        });
+
+        const productPageItem = parseAmazonProductPage(productResponse?.html, searchResultItem.url);
+        if (productPageItem) {
+          amazonItem = {
+            ...searchResultItem,
+            ...productPageItem,
+          };
+        }
+      } catch (error) {
+        console.warn('[NellisCompare] Failed to enrich Amazon item:', error);
       }
     }
 
@@ -247,10 +661,22 @@ async function renderComparisonCard(routeKey) {
       nellisItem,
       amazonItem: amazonItem || null,
     });
+
+    if (!hasRenderableAmazonItem(amazonItem)) {
+      scheduleAmazonLookupRetry(routeKey, nellisItem.title);
+    }
   } catch (error) {
     console.error('[NellisCompare] Failed to load Amazon item:', error);
 
     if (currentLookup !== lookupSequence) {
+      return;
+    }
+
+    if (scheduleAmazonLookupRetry(routeKey, nellisItem.title)) {
+      updateCardState(card, {
+        state: 'loading',
+        nellisItem,
+      });
       return;
     }
 
@@ -259,6 +685,10 @@ async function renderComparisonCard(routeKey) {
       nellisItem,
       amazonItem: null,
     });
+  } finally {
+    if (amazonLookupInFlightKey === lookupKey) {
+      amazonLookupInFlightKey = '';
+    }
   }
 }
 
@@ -267,6 +697,7 @@ function cleanupItemComparison(routeKey) {
   lastRenderedTitle = '';
   pendingRouteKey = '';
   pendingRouteAttempts = 0;
+  remixItemPageTitle = null;
   removeExistingCard();
 }
 
@@ -300,10 +731,8 @@ function ensureCard(itemDetailsAnchor) {
 
   applyNativeCardStyling(card, itemDetailsAnchor);
 
-  if (card.parentElement !== itemDetailsAnchor.parentElement) {
-    itemDetailsAnchor.insertAdjacentElement('afterend', card);
-  } else if (card.previousElementSibling !== itemDetailsAnchor) {
-    itemDetailsAnchor.insertAdjacentElement('afterend', card);
+  if (itemDetailsAnchor.parentElement) {
+    itemDetailsAnchor.parentElement.insertBefore(card, itemDetailsAnchor);
   }
 
   return card;
@@ -319,6 +748,7 @@ function updateCardState(card, { state, nellisItem, amazonItem }) {
   const linkNode = card.querySelector('[data-role="link"]');
 
   if (state === 'loading') {
+    card.dataset.compareState = 'loading';
     bodyNode.hidden = true;
     statusNode.hidden = false;
     statusNode.textContent = 'Loading Amazon item...';
@@ -326,12 +756,14 @@ function updateCardState(card, { state, nellisItem, amazonItem }) {
   }
 
   if (state === 'empty' || !amazonItem?.url) {
+    card.dataset.compareState = 'empty';
     bodyNode.hidden = true;
     statusNode.hidden = false;
     statusNode.textContent = 'Amazon item unavailable.';
     return;
   }
 
+  card.dataset.compareState = 'ready';
   statusNode.hidden = true;
   bodyNode.hidden = false;
 
@@ -381,7 +813,17 @@ function applyNativeCardStyling(card, itemDetailsAnchor) {
 }
 
 function pickStyleValue(value, fallback) {
-  if (!value || value === 'rgba(0, 0, 0, 0)' || value === 'none' || value === 'normal') {
+  if (!value || value === 'none' || value === 'normal') {
+    return fallback;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (
+    normalized === 'transparent' ||
+    normalized === 'rgba(0, 0, 0, 0)' ||
+    normalized === 'rgba(0,0,0,0)' ||
+    /^rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0(?:\.0+)?\s*\)$/.test(normalized)
+  ) {
     return fallback;
   }
 
@@ -499,6 +941,95 @@ function updateBidTotalHint(hint, input) {
   hint.textContent = `Total: ${formatCurrency(total)} (+${formatCurrency(premium)} fees)`;
 }
 
+function attachCartItemFeeHint(root = document) {
+  if (!isCartPage()) {
+    removeCartItemFeeHints(root);
+    return;
+  }
+
+  const containers = root.querySelectorAll('[data-ax="pickups-item-container"]');
+  const activeContainers = new Set();
+
+  for (const container of containers) {
+    if (!(container instanceof HTMLElement)) {
+      continue;
+    }
+
+    const targets = findCartItemPriceTargets(container);
+    if (!targets) {
+      continue;
+    }
+
+    const { priceNode, insertAfterNode } = targets;
+    const amount = parseCurrencyAmount(priceNode.textContent);
+    if (amount === null) {
+      continue;
+    }
+
+    const hint = ensureCartItemFeeHint(container, insertAfterNode);
+    updateCartItemFeeHint(hint, amount);
+    activeContainers.add(container);
+  }
+
+  removeStaleCartItemFeeHints(activeContainers);
+}
+
+function findCartItemPriceTargets(container) {
+  const form = container.querySelector('form[action^="/dashboard/cart/"]');
+  if (!form?.parentElement) {
+    return null;
+  }
+
+  const priceNode = form.parentElement.querySelector('p');
+  if (!(priceNode instanceof HTMLParagraphElement)) {
+    return null;
+  }
+
+  return { priceNode, insertAfterNode: priceNode };
+}
+
+function ensureCartItemFeeHint(container, insertAfterNode) {
+  const existing = container.querySelector(`.${CART_ITEM_FEE_HINT_CLASS}`);
+  if (existing instanceof HTMLElement) {
+    return existing;
+  }
+
+  const hint = document.createElement('div');
+  hint.className = `${CART_ITEM_FEE_HINT_CLASS} text-label-sm opacity-60`;
+  hint.setAttribute('role', 'note');
+  hint.setAttribute('aria-live', 'polite');
+
+  insertAfterNode.insertAdjacentElement('afterend', hint);
+  return hint;
+}
+
+function updateCartItemFeeHint(hint, amount) {
+  if (!(hint instanceof HTMLElement)) {
+    return;
+  }
+
+  const total = amount * (1 + BUYER_PREMIUM_RATE);
+  const premium = total - amount;
+  hint.hidden = false;
+  hint.textContent = `Total: ${formatCurrency(total)} (+${formatCurrency(premium)} fees)`;
+  hint.dataset.premiumSourceAmount = amount.toFixed(2);
+}
+
+function removeStaleCartItemFeeHints(activeContainers) {
+  for (const node of document.querySelectorAll(`.${CART_ITEM_FEE_HINT_CLASS}`)) {
+    const owner = node.closest('[data-ax="pickups-item-container"]');
+    if (!owner || !activeContainers.has(owner)) {
+      node.remove();
+    }
+  }
+}
+
+function removeCartItemFeeHints(root = document) {
+  for (const node of root.querySelectorAll(`.${CART_ITEM_FEE_HINT_CLASS}`)) {
+    node.remove();
+  }
+}
+
 function cssEscape(value) {
   if (typeof value !== 'string' || !value) {
     return '';
@@ -518,9 +1049,11 @@ function attachTimeEndHint() {
   for (const target of targets) {
     activeTargets.add(target.container);
     target.container.classList.add(TIME_HINT_CLASS);
-    if (!target.container.hasAttribute('data-time-tooltip')) {
-      target.container.setAttribute('data-time-tooltip', 'Loading...');
-    }
+    const itemUrl = getItemUrlForTimeTarget(target.container);
+    const itemId = itemUrl ? parseNellisItemIdFromHref(itemUrl) : null;
+    const tip =
+      itemId && closeTimeByItemId.has(itemId) ? closeTimeByItemId.get(itemId) || '' : '';
+    target.container.setAttribute('data-time-tooltip', tip);
 
     if (target.container.dataset.timeHintBound !== 'true') {
       target.container.addEventListener('mouseenter', handleTimeHintHover);
@@ -573,17 +1106,17 @@ async function handleTimeHintHover(event) {
     return;
   }
 
-  if (closeTimeCache.has(itemUrl)) {
-    container.setAttribute('data-time-tooltip', closeTimeCache.get(itemUrl) || '');
+  const itemId = parseNellisItemIdFromHref(itemUrl);
+  if (itemId && closeTimeByItemId.has(itemId)) {
+    container.setAttribute('data-time-tooltip', closeTimeByItemId.get(itemId) || '');
     return;
   }
 
   container.setAttribute('data-time-tooltip', 'Loading...');
 
   try {
-    const response = await fetch(itemUrl, {
+    const response = await fetchNellisAsResponse(itemUrl, {
       method: 'GET',
-      credentials: 'include',
       headers: {
         accept: 'text/html,application/xhtml+xml',
       },
@@ -595,7 +1128,9 @@ async function handleTimeHintHover(event) {
 
     const html = await response.text();
     const tooltipText = extractCloseTimeTooltipFromHtml(html);
-    closeTimeCache.set(itemUrl, tooltipText);
+    if (itemId && tooltipText) {
+      closeTimeByItemId.set(itemId, tooltipText);
+    }
     container.setAttribute('data-time-tooltip', tooltipText);
   } catch (error) {
     console.error('[NellisCompare] Failed to resolve exact close time:', error);
@@ -632,10 +1167,7 @@ function extractCloseTimeTooltipFromHtml(html) {
     return '';
   }
 
-  return new Intl.DateTimeFormat(undefined, {
-    hour: 'numeric',
-    minute: '2-digit',
-  }).format(closeTime);
+  return formatNellisCloseTimeTooltip(closeTime);
 }
 
 function hasTooltipRefreshTargets() {
@@ -721,6 +1253,318 @@ function isPurchasesPage(locationObject = window.location) {
   return locationObject.pathname === '/dashboard/purchases';
 }
 
+function isReceiptsPage(locationObject = window.location) {
+  return locationObject.pathname === '/dashboard/receipts';
+}
+
+function isCartPage(locationObject = window.location) {
+  return locationObject.pathname === '/dashboard/cart' || locationObject.pathname.startsWith('/dashboard/cart/');
+}
+
+function needsNellisItemImageCarouselRefresh() {
+  if (!isNellisAuctionSite()) {
+    return false;
+  }
+
+  for (const anchor of document.querySelectorAll(
+    'a[data-ax="item-card-image-link"][href*="/p/"]'
+  )) {
+    const itemId = parseNellisItemIdFromHref(anchor.getAttribute('href'));
+    if (!itemId) {
+      continue;
+    }
+    const photos = auctionListPhotosByItemId.get(itemId);
+    if (!photos || photos.length < 2) {
+      continue;
+    }
+    const img = anchor.querySelector('img[src]');
+    if (img && !img.closest(`.${AUCTION_LIST_PHOTO_WRAP_CLASS}`)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function normalizePhotoUrl(url) {
+  if (!url || typeof url !== 'string') {
+    return '';
+  }
+  try {
+    return new URL(url, window.location.href).toString();
+  } catch {
+    return '';
+  }
+}
+
+function getItemIdFromAuctionCard(card) {
+  const cardLink = card.querySelector(
+    'a[data-ax="item-card-title-link"], a[data-ax="item-card-image-link"]'
+  );
+  return parseNellisItemIdFromHref(cardLink?.getAttribute('href'));
+}
+
+function prefetchAuctionListPhotos(itemId, currentSrc = '') {
+  const photos = auctionListPhotosByItemId.get(itemId);
+  if (!photos || photos.length < 2) {
+    return;
+  }
+
+  const activeUrl = normalizePhotoUrl(currentSrc);
+  for (const photo of photos) {
+    const url = normalizePhotoUrl(photo);
+    if (!url || url === activeUrl || prefetchedAuctionPhotoUrls.has(url)) {
+      continue;
+    }
+
+    prefetchedAuctionPhotoUrls.add(url);
+    const image = new Image();
+    activeAuctionPhotoPrefetches.set(url, image);
+
+    const cleanup = () => {
+      activeAuctionPhotoPrefetches.delete(url);
+    };
+    const allowRetry = () => {
+      prefetchedAuctionPhotoUrls.delete(url);
+      cleanup();
+    };
+
+    image.addEventListener('load', cleanup, { once: true });
+    image.addEventListener('error', allowRetry, { once: true });
+    image.decoding = 'async';
+    image.src = url;
+  }
+}
+
+function prefetchAuctionListPhotosForCard(card) {
+  if (!(card instanceof HTMLElement)) {
+    return;
+  }
+
+  const itemId = getItemIdFromAuctionCard(card);
+  if (!itemId) {
+    return;
+  }
+
+  const image = card.querySelector(
+    `.${AUCTION_LIST_PHOTO_WRAP_CLASS} img, a[data-ax="item-card-image-link"] img`
+  );
+  const currentSrc =
+    image instanceof HTMLImageElement ? image.currentSrc || image.src || '' : '';
+  prefetchAuctionListPhotos(itemId, currentSrc);
+}
+
+function bindAuctionPhotoPrefetch(anchor) {
+  const card = anchor.closest('[data-ax="item-card-container"]') || anchor;
+  if (!(card instanceof HTMLElement) || card.dataset.nellisPhotoPrefetchBound === 'true') {
+    return;
+  }
+
+  const handlePrefetch = () => prefetchAuctionListPhotosForCard(card);
+  card.addEventListener('pointerenter', handlePrefetch);
+  card.addEventListener('focusin', handlePrefetch);
+  card.dataset.nellisPhotoPrefetchBound = 'true';
+}
+
+function attachNellisPhotoCarouselToAnchor(anchor, itemId, routeKey) {
+  const photos = auctionListPhotosByItemId.get(itemId);
+  if (!photos || photos.length < 2) {
+    return;
+  }
+
+  const img = anchor.querySelector('img[src]');
+  if (!img || img.closest(`.${AUCTION_LIST_PHOTO_WRAP_CLASS}`)) {
+    return;
+  }
+
+  const wrap = document.createElement('span');
+  wrap.className = AUCTION_LIST_PHOTO_WRAP_CLASS;
+  wrap.dataset.nellisItemId = itemId;
+  wrap.dataset.routeKey = routeKey;
+
+  const bar = document.createElement('span');
+  bar.className = AUCTION_LIST_PHOTO_BAR_CLASS;
+  bar.innerHTML = `
+      <button type="button" data-nellis-photo-prev aria-label="Previous photo">‹</button>
+      <span data-nellis-photo-count></span>
+      <button type="button" data-nellis-photo-next aria-label="Next photo">›</button>
+    `;
+
+  img.replaceWith(wrap);
+  wrap.appendChild(img);
+  wrap.appendChild(bar);
+
+  const prevBtn = bar.querySelector('[data-nellis-photo-prev]');
+  const nextBtn = bar.querySelector('[data-nellis-photo-next]');
+  const countEl = bar.querySelector('[data-nellis-photo-count]');
+
+  let index = 0;
+  const syncFromMap = () => {
+    const list = auctionListPhotosByItemId.get(itemId) || photos;
+    if (list.length < 2) {
+      return list;
+    }
+    index = ((index % list.length) + list.length) % list.length;
+    const url = list[index];
+    if (url && img instanceof HTMLImageElement) {
+      img.src = url;
+    }
+    if (countEl) {
+      countEl.textContent = `${index + 1} / ${list.length}`;
+    }
+    return list;
+  };
+
+  syncFromMap();
+
+  const step = (delta) => {
+    const list = auctionListPhotosByItemId.get(itemId) || photos;
+    if (list.length < 2) {
+      return;
+    }
+    index = (index + delta + list.length) % list.length;
+    syncFromMap();
+  };
+
+  const stopNav = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  prevBtn?.addEventListener('click', (event) => {
+    stopNav(event);
+    step(-1);
+  });
+  nextBtn?.addEventListener('click', (event) => {
+    stopNav(event);
+    step(1);
+  });
+}
+
+function renderNellisItemImageCarousels(routeKey) {
+  if (!isNellisAuctionSite()) {
+    return;
+  }
+
+  for (const anchor of document.querySelectorAll(
+    'a[data-ax="item-card-image-link"][href*="/p/"]'
+  )) {
+    const itemId = parseNellisItemIdFromHref(anchor.getAttribute('href'));
+    if (!itemId) {
+      continue;
+    }
+    bindAuctionPhotoPrefetch(anchor);
+    attachNellisPhotoCarouselToAnchor(anchor, itemId, routeKey);
+  }
+}
+
+function getProductIdFromWatchlistForm(form) {
+  const input = form.querySelector('input[name="productId"]');
+  if (input instanceof HTMLInputElement) {
+    const v = input.value.trim();
+    if (/^\d+$/.test(v)) {
+      return v;
+    }
+  }
+  return null;
+}
+
+function renderWatchlistCountBadges(_routeKey) {
+  if (!isNellisAuctionSite()) {
+    return;
+  }
+
+  const forms = document.querySelectorAll(
+    '[data-ax="item-card-watchlist-form"], [data-ax="product-page-watchlist-form"]'
+  );
+  const activeButtons = new Set();
+
+  for (const form of forms) {
+    if (!(form instanceof HTMLFormElement)) {
+      continue;
+    }
+    const button = form.querySelector('button');
+    if (!(button instanceof HTMLElement)) {
+      continue;
+    }
+    activeButtons.add(button);
+
+    const id = getProductIdFromWatchlistForm(form);
+    const count = id ? watchlistCountByItemId.get(id) : undefined;
+
+    let span = button.querySelector(`.${WATCHLIST_COUNT_CLASS}`);
+
+    if (count === undefined || count === 0) {
+      span?.remove();
+      continue;
+    }
+
+    if (!span) {
+      span = document.createElement('span');
+      span.className = WATCHLIST_COUNT_CLASS;
+      span.setAttribute('data-nellis-watchlist-count', '');
+      button.appendChild(span);
+    }
+    span.setAttribute('aria-label', `${count} on watchlist`);
+    span.textContent = String(count);
+  }
+
+  for (const span of document.querySelectorAll(`.${WATCHLIST_COUNT_CLASS}`)) {
+    const parent = span.parentElement;
+    if (!(parent instanceof HTMLElement) || !activeButtons.has(parent)) {
+      span.remove();
+    }
+  }
+
+  for (const form of forms) {
+    const next = form.nextElementSibling;
+    if (next instanceof HTMLElement && next.classList.contains(WATCHLIST_COUNT_CLASS)) {
+      next.remove();
+    }
+  }
+}
+
+function needsWatchlistCountRefresh() {
+  if (!isNellisAuctionSite()) {
+    return false;
+  }
+
+  for (const form of document.querySelectorAll(
+    '[data-ax="item-card-watchlist-form"], [data-ax="product-page-watchlist-form"]'
+  )) {
+    if (!(form instanceof HTMLFormElement)) {
+      continue;
+    }
+    const id = getProductIdFromWatchlistForm(form);
+    if (!id) {
+      continue;
+    }
+    const count = watchlistCountByItemId.get(id);
+    const button = form.querySelector('button');
+    if (!(button instanceof HTMLElement)) {
+      return true;
+    }
+    const span = button.querySelector(`.${WATCHLIST_COUNT_CLASS}`);
+    const shouldShow = count !== undefined && count > 0;
+
+    if (!shouldShow) {
+      if (span) {
+        return true;
+      }
+      continue;
+    }
+
+    if (!span) {
+      return true;
+    }
+    if (span.textContent !== String(count)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function renderPurchasesExportButton(routeKey) {
   if (!isPurchasesPage()) {
     purchasesRouteKey = '';
@@ -787,12 +1631,1265 @@ function removePurchasesExportButton() {
   }
 }
 
+function renderReceiptsSummary(routeKey) {
+  if (!isReceiptsPage()) {
+    receiptsRouteKey = '';
+    receiptsRenderAttempts = 0;
+    removeReceiptsSummary();
+    return;
+  }
+
+  if (receiptsRouteKey !== routeKey) {
+    receiptsRouteKey = routeKey;
+    receiptsRenderAttempts = 0;
+  }
+
+  const anchor = findReceiptsAnchor();
+  if (!anchor) {
+    if (receiptsRenderAttempts < MAX_RENDER_RETRIES) {
+      receiptsRenderAttempts += 1;
+      window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    }
+    return;
+  }
+
+  receiptsRenderAttempts = 0;
+
+  let summary = document.getElementById(RECEIPTS_SUMMARY_ID);
+  if (!summary) {
+    summary = document.createElement('div');
+    summary.id = RECEIPTS_SUMMARY_ID;
+    summary.innerHTML = `
+      <div class="flex flex-wrap justify-end gap-2">
+        <div class="flex items-baseline gap-2 px-3 py-2 bg-white rounded-xl">
+          <div class="text-label-md opacity-70">Spent</div>
+          <div class="text-title-sm font-semibold text-neutral-800" data-role="spent">Loading…</div>
+        </div>
+        <div class="flex items-baseline gap-2 px-3 py-2 bg-white rounded-xl">
+          <div class="text-label-md opacity-70">Returned</div>
+          <div class="text-title-sm font-semibold text-neutral-800" data-role="returned">Loading…</div>
+        </div>
+        <div class="flex items-baseline gap-2 px-3 py-2 bg-white rounded-xl">
+          <div class="text-label-md opacity-70">Total</div>
+          <div class="text-title-sm font-semibold text-neutral-800" data-role="total">Loading…</div>
+        </div>
+      </div>
+    `;
+  }
+
+  summary.dataset.routeKey = routeKey;
+
+  if (summary.parentElement !== anchor) {
+    anchor.appendChild(summary);
+  }
+
+  void refreshReceiptsSummary(routeKey);
+}
+
+function findReceiptsAnchor(root = document) {
+  const headings = Array.from(root.querySelectorAll('h1, h2, h3, [role="heading"]'));
+  const receiptsHeading = headings.find((node) =>
+    node.textContent?.trim().toLowerCase().includes('receipts')
+  );
+
+  if (receiptsHeading) {
+    const headerRow = receiptsHeading.closest('.flex.justify-between.items-center');
+    if (headerRow instanceof HTMLElement) {
+      return headerRow;
+    }
+    if (receiptsHeading.parentElement) {
+      return receiptsHeading.parentElement;
+    }
+  }
+
+  return root.querySelector('main') || null;
+}
+
+function removeReceiptsSummary() {
+  const node = document.getElementById(RECEIPTS_SUMMARY_ID);
+  if (node) {
+    node.remove();
+  }
+}
+
+async function refreshReceiptsSummary(routeKey) {
+  const summary = document.getElementById(RECEIPTS_SUMMARY_ID);
+  if (!(summary instanceof HTMLElement)) {
+    return;
+  }
+  if (summary.dataset.routeKey !== routeKey) {
+    return;
+  }
+  if (receiptsSummaryInFlight) {
+    return;
+  }
+
+  receiptsSummaryInFlight = true;
+  try {
+    const receipts = await fetchAllReceipts();
+    const spent = receipts.reduce((acc, record) => {
+      const total = Number(record?.total);
+      return acc + (Number.isFinite(total) && total > 0 ? total : 0);
+    }, 0);
+
+    // Some receipts APIs represent returns as negative totals. Treat any negative total as a return.
+    const returned = receipts.reduce((acc, record) => {
+      const total = Number(record?.total);
+      if (!Number.isFinite(total)) {
+        return acc;
+      }
+      if (total < 0) {
+        return acc + total; // negative
+      }
+      const count = Number(record?.returnCount) || 0;
+      if (count > 0) {
+        return acc - Math.abs(total); // force return dollars to reduce net
+      }
+      return acc;
+    }, 0);
+
+    const net = spent + returned;
+
+    const spentNode = summary.querySelector('[data-role="spent"]');
+    const returnedNode = summary.querySelector('[data-role="returned"]');
+    const totalNode = summary.querySelector('[data-role="total"]');
+    if (spentNode) spentNode.textContent = formatCurrency(spent);
+    if (returnedNode) {
+      const returnedAbs = Math.abs(returned);
+      returnedNode.textContent = returnedAbs === 0 ? formatCurrency(0) : `-${formatCurrency(returnedAbs)}`;
+    }
+    if (totalNode) totalNode.textContent = formatCurrency(net);
+  } catch (error) {
+    console.error('[NellisCompare] Failed to load receipts summary:', error);
+    const spentNode = summary.querySelector('[data-role="spent"]');
+    const returnedNode = summary.querySelector('[data-role="returned"]');
+    const totalNode = summary.querySelector('[data-role="total"]');
+    if (spentNode) spentNode.textContent = '—';
+    if (returnedNode) returnedNode.textContent = '—';
+    if (totalNode) totalNode.textContent = '—';
+  } finally {
+    receiptsSummaryInFlight = false;
+  }
+}
+
+async function fetchAllReceipts() {
+  const allRecords = [];
+  let page = 0;
+  let total = Infinity;
+
+  while (allRecords.length < total) {
+    const pageData = await fetchReceiptsPage({ page, size: RECEIPTS_PAGE_SIZE });
+    const records = getReceiptsRecords(pageData);
+    const nextTotal = Number(pageData?.total);
+    total = Number.isFinite(nextTotal) && nextTotal >= 0 ? nextTotal : records.length;
+
+    if (!records.length) {
+      break;
+    }
+
+    allRecords.push(...records);
+    page += 1;
+  }
+
+  return allRecords.slice(0, Number.isFinite(total) ? total : allRecords.length);
+}
+
+async function fetchReceiptsPage({ page, size }) {
+  const endpointUrl = new URL('/dashboard/receipts', window.location.origin);
+  endpointUrl.searchParams.set('_data', 'routes/dashboard.receipts._index');
+  endpointUrl.searchParams.set('_p', `s:${size},n:${page}`);
+
+  const response = await fetchNellisAsResponse(endpointUrl.toString(), {
+    method: 'GET',
+    headers: {
+      accept: 'application/json, text/plain, */*',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Receipts request failed with status ${response.status}`);
+  }
+
+  const responseText = await response.text();
+  const parsed = JSON.parse(responseText);
+  return getReceiptsPageData(parsed);
+}
+
+function getReceiptsPageData(payload) {
+  if (payload?.page && Array.isArray(payload.page.records)) {
+    return payload.page;
+  }
+  if (payload?.data?.page && Array.isArray(payload.data.page.records)) {
+    return payload.data.page;
+  }
+  if (Array.isArray(payload?.records)) {
+    return payload;
+  }
+  if (Array.isArray(payload?.data?.records)) {
+    return payload.data;
+  }
+  return { total: 0, records: [] };
+}
+
+function getReceiptsRecords(pageData) {
+  return Array.isArray(pageData?.records) ? pageData.records : [];
+}
+
+function isCartRowBulkSaveForLaterEligible(row) {
+  return Boolean(
+    row.querySelector(
+      'button[name="_action"][value="save-for-later"], [data-ax="pickups-remove-from-cart"]'
+    )
+  );
+}
+
+function isCartRowBulkAddToCheckoutEligible(row) {
+  return Boolean(
+    row.querySelector(
+      'button[name="_action"][value="add-to-checkout"], [data-ax="pickups-add-to-cart"]'
+    )
+  );
+}
+
+function needsCartBulkUiRefresh() {
+  if (!isNellisCartPage()) {
+    return false;
+  }
+
+  const allRows = document.querySelectorAll('[data-ax="pickups-item-container"]');
+  if (!allRows.length) {
+    return false;
+  }
+
+  for (const row of allRows) {
+    const save = isCartRowBulkSaveForLaterEligible(row);
+    const checkout = isCartRowBulkAddToCheckoutEligible(row);
+    if (save && row.querySelector('.nellis-cart-bulk-checkout-cb')) {
+      return true;
+    }
+    if (checkout && row.querySelector('.nellis-cart-bulk-cb')) {
+      return true;
+    }
+    if (!save && row.querySelector('.nellis-cart-bulk-cb')) {
+      return true;
+    }
+    if (!checkout && row.querySelector('.nellis-cart-bulk-checkout-cb')) {
+      return true;
+    }
+  }
+
+  const saveEligible = Array.from(allRows).filter(isCartRowBulkSaveForLaterEligible);
+  if (saveEligible.length) {
+    if (!document.getElementById(CART_BULK_TOOLBAR_ID)) {
+      return true;
+    }
+    if (saveEligible.some((row) => !row.querySelector('.nellis-cart-bulk-cb'))) {
+      return true;
+    }
+  } else if (document.getElementById(CART_BULK_TOOLBAR_ID)) {
+    return true;
+  }
+
+  const checkoutEligible = Array.from(allRows).filter(isCartRowBulkAddToCheckoutEligible);
+  if (checkoutEligible.length) {
+    if (!document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID)) {
+      return true;
+    }
+    if (checkoutEligible.some((row) => !row.querySelector('.nellis-cart-bulk-checkout-cb'))) {
+      return true;
+    }
+  } else if (document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID)) {
+    return true;
+  }
+
+  return false;
+}
+
+function renderCartBulkUis(routeKey) {
+  if (!isNellisCartPage()) {
+    cartBulkRouteKey = '';
+    cartBulkRenderAttempts = 0;
+    teardownCartSortObserver();
+    removeAllCartBulkUi();
+    return;
+  }
+
+  if (cartBulkRouteKey !== routeKey) {
+    cartBulkRouteKey = routeKey;
+    cartBulkRenderAttempts = 0;
+  }
+
+  const allRows = document.querySelectorAll('[data-ax="pickups-item-container"]');
+  if (!allRows.length) {
+    if (cartBulkRenderAttempts < MAX_RENDER_RETRIES) {
+      cartBulkRenderAttempts += 1;
+      window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    }
+    return;
+  }
+
+  cartBulkRenderAttempts = 0;
+
+  cleanupCartBulkRowDecorations(allRows);
+  renderCartSortDropdown(allRows);
+  ensureCartSortObserver(allRows);
+  renderCartBulkSaveSection(allRows);
+  renderCartBulkCheckoutSection(allRows);
+}
+
+function cleanupCartBulkRowDecorations(allRows) {
+  for (const row of allRows) {
+    const save = isCartRowBulkSaveForLaterEligible(row);
+    const checkout = isCartRowBulkAddToCheckoutEligible(row);
+    if (!save) {
+      row.querySelector('.nellis-cart-bulk-cb')?.remove();
+    }
+    if (!checkout) {
+      row.querySelector('.nellis-cart-bulk-checkout-cb')?.remove();
+    }
+    if (!save && !checkout) {
+      row.classList.remove('nellis-cart-bulk-row');
+    }
+  }
+}
+
+function renderCartBulkSaveSection(allRows) {
+  const eligibleRows = Array.from(allRows).filter(isCartRowBulkSaveForLaterEligible);
+  if (!eligibleRows.length) {
+    document.getElementById(CART_BULK_TOOLBAR_ID)?.remove();
+    return;
+  }
+
+  for (const row of eligibleRows) {
+    if (row.querySelector('.nellis-cart-bulk-cb')) {
+      continue;
+    }
+
+    row.classList.add('nellis-cart-bulk-row');
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'nellis-cart-bulk-cb';
+    checkbox.setAttribute('aria-label', 'Select item for bulk save for later');
+    checkbox.addEventListener('change', () => {
+      syncCartBulkToolbar();
+    });
+    row.prepend(checkbox);
+  }
+
+  const anchor = findPickUpBulkToolbarAnchor(eligibleRows[0]);
+  if (!anchor) {
+    return;
+  }
+
+  let toolbar = document.getElementById(CART_BULK_TOOLBAR_ID);
+  if (toolbar) {
+    toolbar.querySelector('[data-role="hint"]')?.remove();
+  }
+  if (!toolbar) {
+    toolbar = document.createElement('div');
+    toolbar.id = CART_BULK_TOOLBAR_ID;
+    toolbar.className = 'nellis-cart-bulk-toolbar';
+
+    const selectAll = document.createElement('button');
+    selectAll.type = 'button';
+    selectAll.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--ghost';
+    selectAll.textContent = 'Select all';
+    selectAll.addEventListener('click', () => {
+      setAllCartBulkSaveCheckboxes(true);
+    });
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--ghost';
+    clearBtn.textContent = 'Clear selection';
+    clearBtn.addEventListener('click', () => {
+      setAllCartBulkSaveCheckboxes(false);
+    });
+
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--primary';
+    saveBtn.dataset.role = 'save';
+    saveBtn.addEventListener('click', handleCartBulkSaveForLater);
+
+    toolbar.append(selectAll, clearBtn, saveBtn);
+  }
+
+  if (toolbar.parentElement !== anchor || toolbar !== anchor.firstElementChild) {
+    anchor.insertBefore(toolbar, anchor.firstChild);
+  }
+
+  syncCartBulkToolbar();
+}
+
+function renderCartBulkCheckoutSection(allRows) {
+  const eligibleRows = Array.from(allRows).filter(isCartRowBulkAddToCheckoutEligible);
+  if (!eligibleRows.length) {
+    document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID)?.remove();
+    return;
+  }
+
+  for (const row of eligibleRows) {
+    if (row.querySelector('.nellis-cart-bulk-checkout-cb')) {
+      continue;
+    }
+
+    row.classList.add('nellis-cart-bulk-row');
+
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'nellis-cart-bulk-checkout-cb';
+    checkbox.setAttribute('aria-label', 'Select item for bulk add to checkout');
+    checkbox.addEventListener('change', () => {
+      syncCartBulkCheckoutToolbar();
+    });
+    row.prepend(checkbox);
+  }
+
+  const anchor = findPickUpBulkToolbarAnchor(eligibleRows[0]);
+  if (!anchor) {
+    return;
+  }
+
+  let toolbar = document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID);
+  if (!toolbar) {
+    toolbar = document.createElement('div');
+    toolbar.id = CART_BULK_CHECKOUT_TOOLBAR_ID;
+    toolbar.className = 'nellis-cart-bulk-toolbar';
+
+    const selectAll = document.createElement('button');
+    selectAll.type = 'button';
+    selectAll.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--ghost';
+    selectAll.textContent = 'Select all';
+    selectAll.addEventListener('click', () => {
+      setAllCartBulkCheckoutCheckboxes(true);
+    });
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--ghost';
+    clearBtn.textContent = 'Clear selection';
+    clearBtn.addEventListener('click', () => {
+      setAllCartBulkCheckoutCheckboxes(false);
+    });
+
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'nellis-cart-bulk-toolbar__btn nellis-cart-bulk-toolbar__btn--primary';
+    addBtn.dataset.role = 'add-checkout';
+    addBtn.addEventListener('click', handleCartBulkAddToCheckout);
+
+    toolbar.append(selectAll, clearBtn, addBtn);
+  }
+
+  if (toolbar.parentElement !== anchor || toolbar !== anchor.firstElementChild) {
+    anchor.insertBefore(toolbar, anchor.firstChild);
+  }
+
+  syncCartBulkCheckoutToolbar();
+}
+
+function getStoredCartSortKey() {
+  try {
+    return localStorage.getItem(CART_SORT_STORAGE_KEY) || 'dateWon_desc';
+  } catch {
+    return 'dateWon_desc';
+  }
+}
+
+function setStoredCartSortKey(value) {
+  try {
+    localStorage.setItem(CART_SORT_STORAGE_KEY, value);
+  } catch {
+    /* ignore */
+  }
+}
+
+function teardownCartSortObserver() {
+  if (cartSortObserver) {
+    cartSortObserver.disconnect();
+    cartSortObserver = null;
+  }
+  if (cartSortRaf) {
+    window.cancelAnimationFrame(cartSortRaf);
+    cartSortRaf = 0;
+  }
+  cartSortApplying = false;
+}
+
+function ensureCartSortObserver(allRows) {
+  const firstRow = allRows?.[0];
+  if (!(firstRow instanceof HTMLElement)) {
+    return;
+  }
+
+  const listContainer = findPickUpBulkToolbarAnchor(firstRow) || firstRow.parentElement;
+  if (!(listContainer instanceof HTMLElement)) {
+    return;
+  }
+
+  if (cartSortObserver) {
+    return;
+  }
+
+  cartSortObserver = new MutationObserver(() => {
+    if (cartSortApplying || cartSortRaf) {
+      return;
+    }
+    cartSortRaf = window.requestAnimationFrame(() => {
+      cartSortRaf = 0;
+      applyCartSortToDom(getStoredCartSortKey());
+    });
+  });
+
+  cartSortObserver.observe(listContainer, { childList: true });
+}
+
+function getCartPickUpsItemsFromRemixPayload(payload) {
+  const items = payload?.pickUps?.items || payload?.data?.pickUps?.items;
+  return Array.isArray(items) ? items : null;
+}
+
+function parseCartDateMs(value) {
+  if (!value) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : Number.NEGATIVE_INFINITY;
+  }
+  if (typeof value === 'string') {
+    const t = Date.parse(value);
+    return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+  }
+  if (value instanceof Date) {
+    const t = value.getTime();
+    return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+  }
+  if (typeof value === 'object' && typeof value.value === 'string') {
+    const t = Date.parse(value.value);
+    return Number.isFinite(t) ? t : Number.NEGATIVE_INFINITY;
+  }
+  return Number.NEGATIVE_INFINITY;
+}
+
+function getCartRowKeyFromItem(item) {
+  const buyNowId =
+    item?.buyNowId ??
+    item?.buynowId ??
+    item?.buyNow?.id ??
+    item?.buy_now_id ??
+    item?.id ??
+    item?.itemId;
+  return buyNowId == null ? '' : String(buyNowId);
+}
+
+function getCartRowKeyFromRow(row) {
+  const form = row.querySelector('form[action*="/dashboard/cart"]');
+  if (form instanceof HTMLFormElement) {
+    const buyNowId =
+      form.querySelector('input[name="buynow-id"]')?.value ||
+      form.querySelector('input[name="buyNowId"]')?.value ||
+      form.querySelector('input[name="buynowId"]')?.value ||
+      '';
+    if (buyNowId) {
+      return buyNowId;
+    }
+  }
+
+  const cancelHref = row
+    .querySelector('a[href^="/cancel-item/"]')
+    ?.getAttribute('href');
+  if (cancelHref) {
+    const match = cancelHref.match(/\/cancel-item\/(\d+)/);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  const href = row.querySelector('a[href*="/p/"]')?.getAttribute('href') || '';
+  if (href) {
+    const parts = href.split('/').filter(Boolean);
+    const maybeProjectId = parts[parts.length - 1];
+    if (maybeProjectId && /^\d+$/.test(maybeProjectId)) {
+      // Not perfect, but better than nothing if buynow-id is missing.
+      return `project:${maybeProjectId}`;
+    }
+  }
+
+  return '';
+}
+
+function buildCartItemDataIndex(items) {
+  const map = new Map();
+  for (const item of items) {
+    const key = getCartRowKeyFromItem(item);
+    if (key && !map.has(key)) {
+      map.set(key, item);
+    }
+  }
+  return map;
+}
+
+function normalizeCartText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getCartItemTitle(item) {
+  return String(
+    item?.leadDescription || item?.title || item?.itemTitle || item?.productTitle || item?.description || ''
+  );
+}
+
+function buildCartItemTitleIndex(items) {
+  const map = new Map();
+  for (const item of items) {
+    const norm = normalizeCartText(getCartItemTitle(item));
+    if (!norm) {
+      continue;
+    }
+    const bucket = map.get(norm);
+    if (bucket) {
+      bucket.push(item);
+    } else {
+      map.set(norm, [item]);
+    }
+  }
+  return map;
+}
+
+function extractCartRowTitle(row) {
+  const titleEl =
+    row.querySelector('a[href*="/p/"] p') ||
+    row.querySelector('a[aria-label*="Visit the product page"] p');
+  return titleEl?.textContent?.trim() || '';
+}
+
+function extractCartRowAmount(row) {
+  const feeHint = row.querySelector('[data-premium-source-amount]');
+  if (feeHint instanceof HTMLElement) {
+    const raw = feeHint.dataset.premiumSourceAmount;
+    const amount = Number(raw);
+    if (Number.isFinite(amount)) {
+      return amount;
+    }
+  }
+
+  const priceText = row.querySelector('.text-body-md, p')?.textContent || '';
+  const parsed = parseCurrencyAmount(priceText);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function extractCartRowDateWonMs(row) {
+  const text = row.textContent || '';
+  const match = text.match(/\bwon\b[:\s-]*([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?)/i);
+  if (!match?.[1]) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  return parseCartDateMs(match[1]);
+}
+
+const CART_SORT_OPTIONS = [
+  ['dateWon_desc', 'Date won (new → old)'],
+  ['dateWon_asc', 'Date won (old → new)'],
+  ['title_az', 'Title (A → Z)'],
+  ['title_za', 'Title (Z → A)'],
+  ['amount_desc', 'Bid amount (high → low)'],
+  ['amount_asc', 'Bid amount (low → high)'],
+];
+
+function getCartSortLabelForKey(key) {
+  const row = CART_SORT_OPTIONS.find(([v]) => v === key);
+  return row ? row[1] : CART_SORT_OPTIONS[0][1];
+}
+
+function renderCartSortDropdown(allRows) {
+  if (!allRows?.length) {
+    return;
+  }
+
+  const anchor = findPickUpBulkToolbarAnchor(allRows[0]);
+  if (!anchor) {
+    return;
+  }
+
+  let wrap = document.getElementById(CART_SORT_DROPDOWN_ID);
+  if (!(wrap instanceof HTMLElement)) {
+    wrap = document.createElement('div');
+    wrap.id = CART_SORT_DROPDOWN_ID;
+    wrap.className = 'nellis-cart-sort relative block text-left min-w-72';
+
+    const shell = document.createElement('div');
+    shell.className = 'relative block text-left min-w-72';
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className =
+      'flex items-center justify-between w-full border border-solid border-gray-500 rounded-xl px-3 py-2 bg-white hover:border-gray-700 focus:outline-secondary shadow-md';
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('data-ax', 'nellis-cart-sort-trigger');
+
+    const textCol = document.createElement('div');
+    textCol.className = 'flex flex-col text-left';
+
+    const hint = document.createElement('p');
+    hint.className = 'cursor-pointer text-label-sm';
+    hint.textContent = 'Sort by';
+
+    const valueEl = document.createElement('p');
+    valueEl.className = 'font-semibold text-title-xs pr-2';
+    valueEl.dataset.role = 'nellis-cart-sort-value';
+
+    textCol.append(hint, valueEl);
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svg.setAttribute('viewBox', '0 0 320 512');
+    svg.setAttribute('width', '20');
+    svg.setAttribute('height', '20');
+    svg.setAttribute('class', 'fill-secondary shrink-0 transition-transform duration-200');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute(
+      'd',
+      'M137.4 374.6c12.5 12.5 32.8 12.5 45.3 0l128-128c9.2-9.2 11.9-22.9 6.9-34.9s-16.6-19.8-29.6-19.8L32 192c-12.9 0-24.6 7.8-29.6 19.8s-2.2 25.7 6.9 34.9l128 128z'
+    );
+    svg.appendChild(path);
+
+    btn.append(textCol, svg);
+
+    const menu = document.createElement('ul');
+    menu.setAttribute('role', 'listbox');
+    menu.className =
+      'absolute left-0 right-0 z-50 mt-1 max-h-60 overflow-auto rounded-xl border border-solid border-gray-500 bg-white py-1 shadow-md hidden';
+    menu.hidden = true;
+
+    for (const [value, text] of CART_SORT_OPTIONS) {
+      const li = document.createElement('li');
+      li.setAttribute('role', 'none');
+      const optBtn = document.createElement('button');
+      optBtn.type = 'button';
+      optBtn.setAttribute('role', 'option');
+      optBtn.dataset.value = value;
+      optBtn.className =
+        'w-full px-3 py-2 text-left text-body-md hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none';
+      optBtn.textContent = text;
+      li.appendChild(optBtn);
+      menu.appendChild(li);
+    }
+
+    let docCloser = null;
+    const detachDocCloser = () => {
+      if (docCloser) {
+        document.removeEventListener('click', docCloser, true);
+        docCloser = null;
+      }
+    };
+
+    const closeMenu = () => {
+      menu.classList.add('hidden');
+      menu.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+      svg.classList.remove('rotate-180');
+      detachDocCloser();
+    };
+
+    const openMenu = () => {
+      menu.classList.remove('hidden');
+      menu.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      svg.classList.add('rotate-180');
+    };
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!menu.hidden) {
+        closeMenu();
+        return;
+      }
+      openMenu();
+      detachDocCloser();
+      docCloser = (ev) => {
+        if (!wrap.contains(ev.target)) {
+          closeMenu();
+        }
+      };
+      window.setTimeout(() => document.addEventListener('click', docCloser, true), 0);
+    });
+
+    menu.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeMenu();
+        btn.focus();
+      }
+    });
+
+    for (const optBtn of menu.querySelectorAll('button[role="option"]')) {
+      optBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const v = optBtn.dataset.value || 'dateWon_desc';
+        setStoredCartSortKey(v);
+        applyCartSortToDom(v);
+        valueEl.textContent = optBtn.textContent || getCartSortLabelForKey(v);
+        closeMenu();
+      });
+    }
+
+    shell.append(btn, menu);
+    wrap.appendChild(shell);
+  }
+
+  const valueEl = wrap.querySelector('[data-role="nellis-cart-sort-value"]');
+  if (valueEl) {
+    valueEl.textContent = getCartSortLabelForKey(getStoredCartSortKey());
+  }
+
+  if (wrap.parentElement !== anchor || wrap !== anchor.firstElementChild) {
+    anchor.insertBefore(wrap, anchor.firstChild);
+  }
+}
+
+function applyCartSortToDom(sortKey) {
+  if (!isCartPage()) {
+    return;
+  }
+  if (isCartSortingPaused()) {
+    return;
+  }
+
+  const rows = Array.from(document.querySelectorAll('[data-ax="pickups-item-container"]')).filter(
+    (n) => n instanceof HTMLElement
+  );
+  if (rows.length < 2) {
+    return;
+  }
+
+  const listContainer = findPickUpBulkToolbarAnchor(rows[0]) || rows[0]?.parentElement;
+  if (!(listContainer instanceof HTMLElement)) {
+    return;
+  }
+
+  const index = buildCartItemDataIndex(lastCartPickupsItems || []);
+  const titleIndex = buildCartItemTitleIndex(lastCartPickupsItems || []);
+  const rowSortValueCache = new WeakMap();
+  const getDataForRow = (row) => {
+    if (rowSortValueCache.has(row)) {
+      return rowSortValueCache.get(row);
+    }
+
+    const key = getCartRowKeyFromRow(row);
+    let data = key && index.has(key) ? index.get(key) : null;
+    if (!data) {
+      const rowTitle = extractCartRowTitle(row);
+      const bucket = titleIndex.get(normalizeCartText(rowTitle));
+      if (bucket?.length) {
+        if (bucket.length === 1) {
+          data = bucket[0];
+        } else {
+          const rowAmount = extractCartRowAmount(row);
+          data = bucket.reduce((best, candidate) => {
+            if (!best) {
+              return candidate;
+            }
+            const bestDelta = Math.abs((Number(best?.amount) || 0) - rowAmount);
+            const candidateDelta = Math.abs((Number(candidate?.amount) || 0) - rowAmount);
+            return candidateDelta < bestDelta ? candidate : best;
+          }, null);
+        }
+      }
+    }
+
+    const resolved = {
+      dateWonMs: parseCartDateMs(data?.dateWon),
+      amount: Number(data?.amount),
+      title: getCartItemTitle(data),
+    };
+
+    if (!Number.isFinite(resolved.dateWonMs) || resolved.dateWonMs === Number.NEGATIVE_INFINITY) {
+      resolved.dateWonMs = extractCartRowDateWonMs(row);
+    }
+    if (!Number.isFinite(resolved.amount)) {
+      resolved.amount = extractCartRowAmount(row);
+    }
+    if (!resolved.title) {
+      resolved.title = extractCartRowTitle(row);
+    }
+
+    rowSortValueCache.set(row, resolved);
+    return resolved;
+  };
+
+  const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
+  const comparator = (aRow, bRow) => {
+    const a = getDataForRow(aRow);
+    const b = getDataForRow(bRow);
+
+    switch (sortKey) {
+      case 'dateWon_asc':
+        return a.dateWonMs - b.dateWonMs;
+      case 'amount_desc':
+        return b.amount - a.amount;
+      case 'amount_asc':
+        return a.amount - b.amount;
+      case 'title_az':
+        return collator.compare(a.title, b.title);
+      case 'title_za':
+        return collator.compare(b.title, a.title);
+      case 'dateWon_desc':
+      default:
+        return b.dateWonMs - a.dateWonMs;
+    }
+  };
+
+  const decorated = rows.map((row, idx) => ({ row, idx }));
+  decorated.sort((a, b) => comparator(a.row, b.row) || a.idx - b.idx);
+
+  const currentOrder = rows.map(getCartRowKeyFromRow);
+  const nextOrder = decorated.map(({ row }) => getCartRowKeyFromRow(row));
+  const alreadySorted =
+    currentOrder.length === nextOrder.length &&
+    currentOrder.every((key, idx) => key && key === nextOrder[idx]);
+  if (alreadySorted) {
+    return;
+  }
+
+  cartSortApplying = true;
+  try {
+    for (const { row } of decorated) {
+      listContainer.appendChild(row);
+    }
+  } finally {
+    cartSortApplying = false;
+  }
+}
+
+function findPickUpBulkToolbarAnchor(eligibleRow) {
+  if (!(eligibleRow instanceof Element)) {
+    return null;
+  }
+
+  let node = eligibleRow.parentElement;
+  while (node && node !== document.body) {
+    if (
+      node instanceof HTMLDivElement &&
+      node.classList.contains('flex') &&
+      node.classList.contains('flex-col') &&
+      node.classList.contains('gap-2.5')
+    ) {
+      return node;
+    }
+    node = node.parentElement;
+  }
+
+  return null;
+}
+
+function removeAllCartBulkUi() {
+  document.getElementById(CART_BULK_TOOLBAR_ID)?.remove();
+  document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID)?.remove();
+
+  for (const checkbox of document.querySelectorAll('.nellis-cart-bulk-cb, .nellis-cart-bulk-checkout-cb')) {
+    checkbox.remove();
+  }
+
+  for (const row of document.querySelectorAll('.nellis-cart-bulk-row')) {
+    row.classList.remove('nellis-cart-bulk-row');
+  }
+}
+
+function getEligibleCartBulkSaveRows() {
+  return Array.from(document.querySelectorAll('[data-ax="pickups-item-container"]')).filter(
+    isCartRowBulkSaveForLaterEligible
+  );
+}
+
+function getEligibleCartBulkCheckoutRows() {
+  return Array.from(document.querySelectorAll('[data-ax="pickups-item-container"]')).filter(
+    isCartRowBulkAddToCheckoutEligible
+  );
+}
+
+function setAllCartBulkSaveCheckboxes(checked) {
+  for (const row of getEligibleCartBulkSaveRows()) {
+    const checkbox = row.querySelector('.nellis-cart-bulk-cb');
+    if (checkbox instanceof HTMLInputElement) {
+      checkbox.checked = checked;
+    }
+  }
+  syncCartBulkToolbar();
+}
+
+function setAllCartBulkCheckoutCheckboxes(checked) {
+  for (const row of getEligibleCartBulkCheckoutRows()) {
+    const checkbox = row.querySelector('.nellis-cart-bulk-checkout-cb');
+    if (checkbox instanceof HTMLInputElement) {
+      checkbox.checked = checked;
+    }
+  }
+  syncCartBulkCheckoutToolbar();
+}
+
+function syncCartBulkToolbar() {
+  const toolbar = document.getElementById(CART_BULK_TOOLBAR_ID);
+  if (!toolbar) {
+    return;
+  }
+
+  const saveBtn = toolbar.querySelector('[data-role="save"]');
+  if (!(saveBtn instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const selectedCount = getEligibleCartBulkSaveRows().filter((row) => {
+    const checkbox = row.querySelector('.nellis-cart-bulk-cb');
+    return checkbox instanceof HTMLInputElement && checkbox.checked;
+  }).length;
+
+  saveBtn.disabled = selectedCount === 0 || cartBulkSaveInFlight;
+  saveBtn.textContent =
+    selectedCount === 0
+      ? 'Save selected for later'
+      : `Save selected for later (${selectedCount})`;
+}
+
+function syncCartBulkCheckoutToolbar() {
+  const toolbar = document.getElementById(CART_BULK_CHECKOUT_TOOLBAR_ID);
+  if (!toolbar) {
+    return;
+  }
+
+  const addBtn = toolbar.querySelector('[data-role="add-checkout"]');
+  if (!(addBtn instanceof HTMLButtonElement)) {
+    return;
+  }
+
+  const selectedCount = getEligibleCartBulkCheckoutRows().filter((row) => {
+    const checkbox = row.querySelector('.nellis-cart-bulk-checkout-cb');
+    return checkbox instanceof HTMLInputElement && checkbox.checked;
+  }).length;
+
+  addBtn.disabled = selectedCount === 0 || cartBulkCheckoutInFlight;
+  addBtn.textContent =
+    selectedCount === 0
+      ? 'Add selected to checkout'
+      : `Add selected to checkout (${selectedCount})`;
+}
+
+function buildCartFormPostBody(form, actionValue) {
+  const data = new URLSearchParams();
+
+  for (const element of form.elements) {
+    if (
+      !(
+        element instanceof HTMLInputElement ||
+        element instanceof HTMLSelectElement ||
+        element instanceof HTMLTextAreaElement
+      )
+    ) {
+      continue;
+    }
+
+    if (element.disabled || !element.name) {
+      continue;
+    }
+
+    if (element instanceof HTMLInputElement && (element.type === 'checkbox' || element.type === 'radio')) {
+      if (element.checked) {
+        data.append(element.name, element.value);
+      }
+      continue;
+    }
+
+    if (element instanceof HTMLInputElement && element.type === 'file') {
+      continue;
+    }
+
+    data.append(element.name, element.value);
+  }
+
+  data.set('_action', actionValue);
+  return data;
+}
+
+async function postCartPickupsFormForRow(row, actionValue, errorLabel) {
+  const form = row.querySelector('form[action*="/dashboard/cart"]');
+  if (!(form instanceof HTMLFormElement)) {
+    throw new Error('Cart form not found for a selected row.');
+  }
+
+  const action = form.getAttribute('action');
+  if (!action) {
+    throw new Error('Cart form is missing an action URL.');
+  }
+
+  const actionUrl = new URL(action, window.location.origin).toString();
+  const body = buildCartFormPostBody(form, actionValue);
+
+  const response = await fetchNellisAsResponse(actionUrl, {
+    method: 'POST',
+    headers: {
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+    },
+    body: body.toString(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`${errorLabel} failed with status ${response.status}.`);
+  }
+}
+
+function buildCartPickupsPostRequests(rows, actionValue) {
+  return rows.map((row) => {
+    const form = row.querySelector('form[action*="/dashboard/cart"]');
+    if (!(form instanceof HTMLFormElement)) {
+      throw new Error('Cart form not found for a selected row.');
+    }
+
+    const action = form.getAttribute('action');
+    if (!action) {
+      throw new Error('Cart form is missing an action URL.');
+    }
+
+    return {
+      actionUrl: new URL(action, window.location.origin).toString(),
+      body: buildCartFormPostBody(form, actionValue).toString(),
+    };
+  });
+}
+
+async function postCartPickupsFormFromSnapshot(actionUrl, body, errorLabel) {
+  const response = await fetchNellisAsResponse(actionUrl, {
+    method: 'POST',
+    headers: {
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+    },
+    body,
+  });
+  if (!response.ok) {
+    throw new Error(`${errorLabel} failed with status ${response.status}.`);
+  }
+}
+
+async function handleCartBulkSaveForLater() {
+  if (cartBulkSaveInFlight) {
+    return;
+  }
+
+  const selectedRows = getEligibleCartBulkSaveRows().filter((row) => {
+    const checkbox = row.querySelector('.nellis-cart-bulk-cb');
+    return checkbox instanceof HTMLInputElement && checkbox.checked;
+  });
+
+  if (!selectedRows.length) {
+    return;
+  }
+
+  cartBulkSaveInFlight = true;
+  pauseCartSorting(8000);
+  syncCartBulkToolbar();
+
+  const saveBtn = document.querySelector(`#${CART_BULK_TOOLBAR_ID} [data-role="save"]`);
+  if (saveBtn instanceof HTMLButtonElement) {
+    saveBtn.textContent = `Saving… (0/${selectedRows.length})`;
+  }
+
+  try {
+    const requests = buildCartPickupsPostRequests(selectedRows, 'save-for-later');
+    let index = 0;
+    for (const request of requests) {
+      await postCartPickupsFormFromSnapshot(request.actionUrl, request.body, 'Save for later');
+      index += 1;
+      if (saveBtn instanceof HTMLButtonElement) {
+        saveBtn.textContent = `Saving… (${index}/${selectedRows.length})`;
+      }
+    }
+    window.location.reload();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Save for later failed.';
+    window.alert(message);
+  } finally {
+    cartBulkSaveInFlight = false;
+    syncCartBulkToolbar();
+  }
+}
+
+async function handleCartBulkAddToCheckout() {
+  if (cartBulkCheckoutInFlight) {
+    return;
+  }
+
+  const selectedRows = getEligibleCartBulkCheckoutRows().filter((row) => {
+    const checkbox = row.querySelector('.nellis-cart-bulk-checkout-cb');
+    return checkbox instanceof HTMLInputElement && checkbox.checked;
+  });
+
+  if (!selectedRows.length) {
+    return;
+  }
+
+  cartBulkCheckoutInFlight = true;
+  pauseCartSorting(8000);
+  syncCartBulkCheckoutToolbar();
+
+  const addBtn = document.querySelector(`#${CART_BULK_CHECKOUT_TOOLBAR_ID} [data-role="add-checkout"]`);
+  if (addBtn instanceof HTMLButtonElement) {
+    addBtn.textContent = `Adding… (0/${selectedRows.length})`;
+  }
+
+  try {
+    const requests = buildCartPickupsPostRequests(selectedRows, 'add-to-checkout');
+    let index = 0;
+    for (const request of requests) {
+      await postCartPickupsFormFromSnapshot(request.actionUrl, request.body, 'Add to checkout');
+      index += 1;
+      if (addBtn instanceof HTMLButtonElement) {
+        addBtn.textContent = `Adding… (${index}/${selectedRows.length})`;
+      }
+    }
+    window.location.reload();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Add to checkout failed.';
+    window.alert(message);
+  } finally {
+    cartBulkCheckoutInFlight = false;
+    syncCartBulkCheckoutToolbar();
+  }
+}
+
 function needsDarkModeToggleRender() {
   return isNellisAuctionSite() && !document.getElementById(DARK_MODE_TOGGLE_ID);
 }
 
 function needsNotificationsToggleRender() {
   return isNellisAuctionSite() && Boolean(findDashboardAuctionsSidebar()) && !document.getElementById(NOTIFICATIONS_TOGGLE_ID);
+}
+
+function syncCriticalDarkModePaint() {
+  const isDark = document.documentElement.classList.contains(DARK_MODE_HTML_CLASS);
+  const existing = document.getElementById(DARK_MODE_CRITICAL_STYLE_ID);
+
+  if (!isDark) {
+    existing?.remove();
+    return;
+  }
+
+  const css = `html.${DARK_MODE_HTML_CLASS},html.${DARK_MODE_HTML_CLASS} body{background-color:#1f1f1f!important;color-scheme:dark}`;
+  if (existing) {
+    existing.textContent = css;
+    return;
+  }
+
+  const style = document.createElement('style');
+  style.id = DARK_MODE_CRITICAL_STYLE_ID;
+  style.textContent = css;
+  (document.head || document.documentElement).appendChild(style);
 }
 
 function applyStoredDarkMode() {
@@ -805,6 +2902,7 @@ function applyStoredDarkMode() {
   } catch {
     document.documentElement.classList.remove(DARK_MODE_HTML_CLASS);
   }
+  syncCriticalDarkModePaint();
 }
 
 function syncDarkModeToggleButtons() {
@@ -949,6 +3047,7 @@ function handleDarkModeToggle() {
   }
 
   syncDarkModeToggleButtons();
+  syncCriticalDarkModePaint();
   refreshComparisonCardStyling();
 }
 
@@ -958,12 +3057,12 @@ function refreshComparisonCardStyling() {
     return;
   }
 
-  const anchor = findTitleDescriptionAnchor() || findItemDetailsAnchor();
-  if (!anchor) {
+  const itemDetailsAnchor = findItemDetailsAnchor();
+  if (!itemDetailsAnchor) {
     return;
   }
 
-  applyNativeCardStyling(card, anchor);
+  applyNativeCardStyling(card, itemDetailsAnchor);
 }
 
 function renderDarkModeToggleButtons() {
@@ -1474,35 +3573,20 @@ async function fetchPurchasesPage({ page, size, omitPageParam = false }) {
     endpointUrl.searchParams.set('page', String(page));
   }
 
-  try {
-    const response = await fetch(endpointUrl.toString(), {
-      method: 'GET',
-      credentials: 'include',
-      headers: {
-        accept: 'application/json, text/plain, */*',
-      },
-    });
+  const response = await fetchNellisAsResponse(endpointUrl.toString(), {
+    method: 'GET',
+    headers: {
+      accept: 'application/json, text/plain, */*',
+    },
+  });
 
-    if (!response.ok) {
-      throw new Error(`Purchases request failed with status ${response.status}`);
-    }
-
-    const responseText = await response.text();
-    const parsed = JSON.parse(responseText);
-    return getPurchasesPageData(parsed);
-  } catch (error) {
-    const fallbackResponse = await sendRuntimeMessage({
-      type: 'FETCH_PURCHASES_PAGE',
-      page,
-      size,
-    });
-
-    if (fallbackResponse?.error) {
-      throw error;
-    }
-
-    return getPurchasesPageData(fallbackResponse?.data);
+  if (!response.ok) {
+    throw new Error(`Purchases request failed with status ${response.status}`);
   }
+
+  const responseText = await response.text();
+  const parsed = JSON.parse(responseText);
+  return getPurchasesPageData(parsed);
 }
 
 function getPurchasesPageData(payload) {
@@ -1584,894 +3668,3 @@ function downloadPurchasesCsv(csvText) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 10000);
 }
 
-function injectStyles() {
-  if (document.getElementById(STYLE_ID)) {
-    return;
-  }
-
-  const style = document.createElement('style');
-  style.id = STYLE_ID;
-  style.textContent = `
-    #${CARD_ID} {
-      margin-top: 16px;
-      border: 0;
-      border-radius: var(--nellis-compare-radius, 12px);
-      background: var(--nellis-compare-background, #ffffff);
-      box-shadow: var(--nellis-compare-shadow, 0 6px 18px rgba(15, 23, 42, 0.06));
-      padding: 16px;
-      color: var(--nellis-compare-text, #1f2937);
-      font-family: var(--nellis-compare-font, inherit);
-    }
-
-    #${CARD_ID} * {
-      box-sizing: border-box;
-      font-family: inherit;
-    }
-
-    #${CARD_ID} .nellis-compare__header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 12px;
-    }
-
-    #${CARD_ID} .nellis-compare__title {
-      margin: 0;
-      font-size: 15px;
-      line-height: 1.2;
-      font-weight: 700;
-      color: var(--nellis-compare-heading, #111827);
-    }
-
-    #${CARD_ID} .nellis-compare__status {
-      font-size: 13px;
-      line-height: 1.5;
-      color: var(--nellis-compare-muted, #6b7280);
-    }
-
-    #${CARD_ID} .nellis-compare__body {
-      display: grid;
-      grid-template-columns: 92px minmax(0, 1fr);
-      gap: 14px;
-      align-items: start;
-    }
-
-    #${CARD_ID} .nellis-compare__image-wrap {
-      width: 92px;
-      height: 92px;
-      border-radius: 12px;
-      background: #ffffff;
-      border: 0;
-      display: grid;
-      place-items: center;
-      overflow: hidden;
-    }
-
-    #${CARD_ID} .nellis-compare__image {
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      background: #fff;
-    }
-
-    #${CARD_ID} .nellis-compare__content {
-      min-width: 0;
-    }
-
-    #${CARD_ID} .nellis-compare__product-title {
-      display: inline-block;
-      margin: 0 0 12px;
-      color: var(--nellis-compare-heading, #111827);
-      text-decoration: none;
-      font-size: 14px;
-      line-height: 1.5;
-      font-weight: 600;
-    }
-
-    #${CARD_ID} .nellis-compare__product-title:hover {
-      text-decoration: underline;
-    }
-
-    #${CARD_ID} .nellis-compare__price {
-      margin: 0 0 12px;
-      font-size: 20px;
-      line-height: 1.1;
-      font-weight: 800;
-      color: #a16207;
-    }
-
-    #${CARD_ID} .nellis-compare__button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 36px;
-      padding: 0 14px;
-      width: 100%;
-      border-radius: 10px;
-      border: 0;
-      background: linear-gradient(90deg, #c31432 0%, #93291e 100%);
-      color: #ffffff;
-      text-decoration: none;
-      font-size: 13px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.02em;
-    }
-
-    #${CARD_ID} .nellis-compare__button:hover {
-      filter: brightness(0.97);
-    }
-
-    .${PREMIUM_HINT_CLASS} {
-      position: relative;
-      cursor: default;
-      overflow: visible;
-    }
-
-    .${PREMIUM_HINT_CLASS}::after {
-      content: attr(data-premium-tooltip);
-      position: absolute;
-      left: 50%;
-      bottom: calc(100% + 8px);
-      transform: translateX(-50%);
-      padding: 8px 10px;
-      border-radius: 8px;
-      background: rgba(17, 24, 39, 0.94);
-      color: #fff;
-      font-size: 12px;
-      line-height: 1.2;
-      font-weight: 600;
-      white-space: nowrap;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 120ms ease;
-      z-index: 9999;
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
-    }
-
-    .${PREMIUM_HINT_CLASS}::before {
-      content: '';
-      position: absolute;
-      left: 50%;
-      bottom: calc(100% + 2px);
-      transform: translateX(-50%);
-      border-left: 6px solid transparent;
-      border-right: 6px solid transparent;
-      border-top: 6px solid rgba(17, 24, 39, 0.94);
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 120ms ease;
-      z-index: 9999;
-    }
-
-    .${PREMIUM_HINT_CLASS}:hover::after,
-    .${PREMIUM_HINT_CLASS}:hover::before {
-      opacity: 1;
-    }
-
-    .${TIME_HINT_CLASS} {
-      position: relative;
-      cursor: default;
-      overflow: visible;
-    }
-
-    .${TIME_HINT_CLASS}::after {
-      content: attr(data-time-tooltip);
-      position: absolute;
-      left: 50%;
-      bottom: calc(100% + 8px);
-      transform: translateX(-50%);
-      padding: 8px 10px;
-      border-radius: 8px;
-      background: rgba(17, 24, 39, 0.94);
-      color: #fff;
-      font-size: 12px;
-      line-height: 1.2;
-      font-weight: 600;
-      white-space: nowrap;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 120ms ease;
-      z-index: 9999;
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.22);
-    }
-
-    .${TIME_HINT_CLASS}::before {
-      content: '';
-      position: absolute;
-      left: 50%;
-      bottom: calc(100% + 2px);
-      transform: translateX(-50%);
-      border-left: 6px solid transparent;
-      border-right: 6px solid transparent;
-      border-top: 6px solid rgba(17, 24, 39, 0.94);
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 120ms ease;
-      z-index: 9999;
-    }
-
-    .${TIME_HINT_CLASS}:hover::after,
-    .${TIME_HINT_CLASS}:hover::before,
-    .${TIME_HINT_CLASS}:focus-within::after,
-    .${TIME_HINT_CLASS}:focus-within::before {
-      opacity: 1;
-    }
-
-    .nellis-export-button {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 38px;
-      padding: 0 16px;
-      border-radius: 12px;
-      border: 1px solid rgba(15, 23, 42, 0.12);
-      background: #ffffff;
-      color: #111827;
-      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      margin-top: 12px;
-    }
-
-    .nellis-export-button:hover:not(:disabled) {
-      filter: brightness(0.98);
-    }
-
-    .nellis-export-button:disabled {
-      cursor: wait;
-      opacity: 0.7;
-    }
-
-    .${BID_TOTAL_HINT_CLASS} {
-      padding: 6px 10px;
-      font-size: 12px;
-      line-height: 1.25;
-      font-weight: 600;
-      letter-spacing: 0.01em;
-      color: rgba(17, 24, 39, 0.72);
-    }
-
-    html.${DARK_MODE_HTML_CLASS} .${BID_TOTAL_HINT_CLASS} {
-      color: rgba(229, 229, 229, 0.78);
-    }
-
-    #${DARK_MODE_TOGGLE_ID} {
-      box-sizing: border-box;
-      position: fixed;
-      left: 16px;
-      bottom: 16px;
-      right: auto;
-      z-index: 2147483000;
-      width: 40px;
-      height: 40px;
-      margin: 0;
-      padding: 0;
-      display: grid;
-      place-items: center;
-      border: 1px solid rgba(15, 23, 42, 0.14);
-      border-radius: 9999px;
-      background: #ffffff;
-      color: #334155;
-      cursor: pointer;
-      opacity: 1;
-      box-shadow: 0 4px 18px rgba(15, 23, 42, 0.14);
-      transition: background 140ms ease, color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
-    }
-
-    #${DARK_MODE_TOGGLE_ID} svg {
-      display: block;
-      flex-shrink: 0;
-      stroke: currentColor;
-    }
-
-    #${DARK_MODE_TOGGLE_ID}:hover {
-      background: #f8fafc;
-      color: #0f172a;
-      border-color: rgba(15, 23, 42, 0.2);
-      box-shadow: 0 6px 20px rgba(15, 23, 42, 0.18);
-    }
-
-    #${DARK_MODE_TOGGLE_ID}:focus-visible {
-      outline: 2px solid rgba(100, 116, 139, 0.55);
-      outline-offset: 2px;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #${DARK_MODE_TOGGLE_ID} {
-      background: #262626;
-      color: #e2e8f0;
-      border-color: rgba(148, 163, 184, 0.35);
-      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #${DARK_MODE_TOGGLE_ID}:hover {
-      background: #333333;
-      color: #f8fafc;
-      border-color: rgba(203, 213, 225, 0.45);
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #${DARK_MODE_TOGGLE_ID}:focus-visible {
-      outline-color: rgba(148, 163, 184, 0.65);
-    }
-
-    html.${DARK_MODE_HTML_CLASS} {
-      color-scheme: dark;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} body {
-      background-color: #1f1f1f !important;
-      color: #e5e5e5 !important;
-    }
-
-    /*
-     * Neutral surfaces: use [class~="…"] for exact tokens only. Substring [class*="bg-neutral-100"]
-     * falsely matches hover:bg-neutral-100 (sidebar links looked always “selected”).
-     */
-    html.${DARK_MODE_HTML_CLASS} .bg-neutral-50,
-    html.${DARK_MODE_HTML_CLASS} .bg-neutral-100,
-    html.${DARK_MODE_HTML_CLASS} .bg-neutral-200,
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-neutral-50"],
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-neutral-100"],
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-neutral-200"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xxs:bg-neutral-50"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xxs:bg-neutral-100"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xxs:bg-neutral-200"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xs:bg-neutral-50"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xs:bg-neutral-100"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xs:bg-neutral-200"],
-    html.${DARK_MODE_HTML_CLASS} [class~="sm:bg-neutral-50"],
-    html.${DARK_MODE_HTML_CLASS} [class~="sm:bg-neutral-100"],
-    html.${DARK_MODE_HTML_CLASS} [class~="sm:bg-neutral-200"],
-    html.${DARK_MODE_HTML_CLASS} [class~="md:bg-neutral-50"],
-    html.${DARK_MODE_HTML_CLASS} [class~="md:bg-neutral-100"],
-    html.${DARK_MODE_HTML_CLASS} [class~="md:bg-neutral-200"],
-    html.${DARK_MODE_HTML_CLASS} [class~="lg:bg-neutral-50"],
-    html.${DARK_MODE_HTML_CLASS} [class~="lg:bg-neutral-100"],
-    html.${DARK_MODE_HTML_CLASS} [class~="lg:bg-neutral-200"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xl:bg-neutral-50"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xl:bg-neutral-100"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xl:bg-neutral-200"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xxl:bg-neutral-50"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xxl:bg-neutral-100"],
-    html.${DARK_MODE_HTML_CLASS} [class~="xxl:bg-neutral-200"],
-    html.${DARK_MODE_HTML_CLASS} [class~="2xl:bg-neutral-50"],
-    html.${DARK_MODE_HTML_CLASS} [class~="2xl:bg-neutral-100"],
-    html.${DARK_MODE_HTML_CLASS} [class~="2xl:bg-neutral-200"],
-    html.${DARK_MODE_HTML_CLASS} [class~="3xl:bg-neutral-50"],
-    html.${DARK_MODE_HTML_CLASS} [class~="3xl:bg-neutral-100"],
-    html.${DARK_MODE_HTML_CLASS} [class~="3xl:bg-neutral-200"] {
-      background-color: #262626 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-neutral-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-neutral-900"] {
-      background-color: #171717 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} .bg-white,
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-white"]:not([class*="before:bg-white"]) {
-      background-color: #1f1f1f !important;
-    }
-
-    /* Search / listing “Filters” sticky bar: no solid strip (bg-white + lg:bg-neutral-100) */
-    html.${DARK_MODE_HTML_CLASS} [class*="sticky"][class*="top-0"][class*="bg-white"][class*="lg:bg-neutral-100"][class*="z-50"][class*="my-2.5"] {
-      background-color: transparent !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-burgundy-50"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-burgundy-100"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-100"] {
-      background-color: #2a2a2a !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-secondary"] {
-      background-color: #262626 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="hover:bg-secondary-light"]:hover {
-      background-color: #333333 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-transition-background"] {
-      background-color: #1f1f1f !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="before:bg-white"]::before {
-      background-color: #1f1f1f !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="hover:bg-neutral-100"]:hover,
-    html.${DARK_MODE_HTML_CLASS} [class*="hover:bg-neutral-300"]:hover,
-    html.${DARK_MODE_HTML_CLASS} [class*="hover:bg-burgundy-100"]:hover,
-    html.${DARK_MODE_HTML_CLASS} [class*="focus-visible:bg-burgundy-100"]:focus-visible {
-      background-color: #333333 !important;
-    }
-
-    /* Dashboard sidebar: match parent strip; only aria-current row is highlighted */
-    html.${DARK_MODE_HTML_CLASS} [class~="flex-col"][class~="gap-3"][class~="bg-white"] > a[href] {
-      background-color: transparent !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class~="flex-col"][class~="gap-3"][class~="bg-white"] > a[href][aria-current] {
-      background-color: #262626 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class~="flex-col"][class~="gap-3"][class~="bg-white"] > a[href]:not([aria-current]):hover {
-      background-color: #2a2a2a !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class~="flex-col"][class~="gap-3"][class~="bg-white"] > a[href][aria-current]:hover {
-      background-color: #333333 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="hover:bg-[#"]:hover,
-    html.${DARK_MODE_HTML_CLASS} [class*="focus:bg-[#"]:focus {
-      background-color: rgba(255, 255, 255, 0.07) !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} .text-gray-900,
-    html.${DARK_MODE_HTML_CLASS} .text-gray-800,
-    html.${DARK_MODE_HTML_CLASS} [class*="text-gray-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="text-gray-800"] {
-      color: #fafafa !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} .text-gray-700,
-    html.${DARK_MODE_HTML_CLASS} .text-gray-600,
-    html.${DARK_MODE_HTML_CLASS} [class*="text-gray-700"],
-    html.${DARK_MODE_HTML_CLASS} [class*="text-gray-600"] {
-      color: #d4d4d4 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} .text-gray-500,
-    html.${DARK_MODE_HTML_CLASS} [class*="text-gray-500"] {
-      color: #a3a3a3 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="text-neutral-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="text-neutral-900"] {
-      color: #e5e5e5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="text-burgundy-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="text-secondary"] {
-      color: #d4d4d4 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="placeholder:text-gray-700"]::placeholder {
-      color: #737373 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} .fill-gray-900,
-    html.${DARK_MODE_HTML_CLASS} .fill-gray-800,
-    html.${DARK_MODE_HTML_CLASS} [class*="fill-gray-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="fill-gray-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="fill-neutral-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="fill-neutral-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="fill-burgundy-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="fill-secondary"],
-    html.${DARK_MODE_HTML_CLASS} [class*="fill-black"] {
-      fill: #d4d4d4 !important;
-    }
-
-    /*
-     * Search filter column: many header SVGs have no fill class (default black → invisible on dark cards).
-     */
-    html.${DARK_MODE_HTML_CLASS} [data-ax^="search-refine"] svg:not([class*="fill-"]) path,
-    html.${DARK_MODE_HTML_CLASS} [data-ax^="search-refine"] form svg path,
-    html.${DARK_MODE_HTML_CLASS} [class*="rounded-itemCard"][class*="shadow-md"] details svg:not([class*="fill-"]) path {
-      fill: #e5e5e5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [data-ax^="search-refine"] [class*="fill-secondary"] {
-      fill: #f0f0f0 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [data-ax^="search-refine"] [class*="fill-starRating"] {
-      fill: #fbbf24 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [data-ax^="search-refine"] [class*="fill-gray-900"] {
-      fill: #94a3b8 !important;
-    }
-
-    /* Icons that only set fill when .group is hovered/focused need a visible default on dark surfaces */
-    html.${DARK_MODE_HTML_CLASS} svg[class*="group-hover:fill-white"],
-    html.${DARK_MODE_HTML_CLASS} svg[class*="group-focus-within:fill-white"] {
-      fill: #e5e5e5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} .group:hover svg[class*="group-hover:fill-white"],
-    html.${DARK_MODE_HTML_CLASS} .group:focus-within svg[class*="group-hover:fill-white"] {
-      fill: #ffffff !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="rounded-full"][class*="bg-white"]:hover svg[class*="group-hover:fill-white"],
-    html.${DARK_MODE_HTML_CLASS} [class*="rounded-full"][class*="group-hover:bg-secondary"]:hover svg[class*="group-hover:fill-white"],
-    html.${DARK_MODE_HTML_CLASS} [class*="rounded-full"][class*="group-focus-within:bg-secondary"]:focus-within svg[class*="group-hover:fill-white"] {
-      fill: #ffffff !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="fill-sincity-red-600"] {
-      fill: #a3a3a3 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="fill-sincity-red-800"] {
-      fill: #fb7185 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="text-burgundy-800"] {
-      color: #fecdd3 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} .stroke-burgundy-900,
-    html.${DARK_MODE_HTML_CLASS} [class*="stroke-burgundy-900"] {
-      stroke: #a3a3a3 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} .outline-burgundy-900,
-    html.${DARK_MODE_HTML_CLASS} .border-burgundy-900,
-    html.${DARK_MODE_HTML_CLASS} .border-burgundy-800,
-    html.${DARK_MODE_HTML_CLASS} [class*="outline-burgundy-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="border-burgundy-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="border-burgundy-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="outline-neutral-400"],
-    html.${DARK_MODE_HTML_CLASS} [class*="border-neutral-300"],
-    html.${DARK_MODE_HTML_CLASS} [class*="border-neutral-400"],
-    html.${DARK_MODE_HTML_CLASS} [class*="border-gray-500"],
-    html.${DARK_MODE_HTML_CLASS} [class*="border-secondary"],
-    html.${DARK_MODE_HTML_CLASS} [class*="outline-secondary"] {
-      outline-color: #525252 !important;
-      border-color: #525252 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="shadow-header"],
-    html.${DARK_MODE_HTML_CLASS} [class*="shadow-md"],
-    html.${DARK_MODE_HTML_CLASS} [class*="shadow-sm"] {
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45) !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} .divide-gray-200 > :not([hidden]) ~ :not([hidden]),
-    html.${DARK_MODE_HTML_CLASS} [class*="divide-gray-"] > :not([hidden]) ~ :not([hidden]),
-    html.${DARK_MODE_HTML_CLASS} [class*="divide-neutral"] > :not([hidden]) ~ :not([hidden]) {
-      border-color: rgba(64, 64, 64, 0.75) !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="ring-offset-white"] {
-      --tw-ring-offset-color: #1f1f1f !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="disabled:bg-gray-700"]:disabled {
-      background-color: #404040 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="disabled:border-gray-400"]:disabled {
-      border-color: #525252 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-zinc-50"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-zinc-100"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-zinc-200"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-slate-50"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-slate-100"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-slate-200"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-stone-50"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-stone-100"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-gray-50"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-gray-100"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-gray-200"] {
-      background-color: #262626 !important;
-    }
-
-    /* Unread / alert notification strip (bg-sincity-red-50) */
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] {
-      background-color: #3d2326 !important;
-      color: #f5f0f0 !important;
-    }
-
-    /* Search header (CSS-module) */
-    html.${DARK_MODE_HTML_CLASS} [class*="__search-header"] h2 {
-      color: #fafafa !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] p,
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] [class*="text-body-"] {
-      color: #ece7e7 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] [class*="opacity-60"] {
-      color: #c9bdbd !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] button svg path {
-      fill: #e5e5e5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-sincity-red-50"] [class*="ring-gray-400"] {
-      --tw-ring-color: rgba(212, 212, 212, 0.55) !important;
-      color: #f5f5f5 !important;
-    }
-
-    /* Header / nav: icons without a Tailwind fill-* class (e.g. notification bell) */
-    html.${DARK_MODE_HTML_CLASS} header svg:not([class*="fill-"]) path,
-    html.${DARK_MODE_HTML_CLASS} nav svg:not([class*="fill-"]) path {
-      fill: #e5e5e5 !important;
-    }
-
-    /* Won / success (emerald) and highlight (orange) */
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] {
-      background-color: #022c22 !important;
-      color: #ecfdf5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] {
-      background-color: #064e3b !important;
-      color: #d1fae5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] {
-      background-color: #065f46 !important;
-      color: #ecfdf5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-700"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-50"] [class*="text-gray-600"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-700"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-100"] [class*="text-gray-600"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-700"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-emerald-200"] [class*="text-gray-600"] {
-      color: #ecfdf5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-100"] {
-      background-color: #7c2d12 !important;
-      color: #ffedd5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-100"] [class*="text-gray-900"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-100"] [class*="text-gray-800"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-100"] [class*="text-gray-700"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-100"] [class*="text-gray-600"] {
-      color: #fed7aa !important;
-    }
-
-    /* Orange surface used by product-page sticky bars + bid-section hint cards */
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-200/"],
-    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-200"],
-    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-200"],
-    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-200"] {
-      background-color: #7c2d12 !important;
-      color: #ffedd5 !important;
-      border-color: rgba(253, 186, 116, 0.55) !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] [class*="text-gray-900"],
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] [class*="text-gray-800"],
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] [class*="text-gray-700"],
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] [class*="text-gray-600"],
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] strong,
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] span,
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-200"] h6 {
-      color: #fff7ed !important;
-    }
-
-    /* Product page sticky header (breadcrumb / outbid bar) */
-    html.${DARK_MODE_HTML_CLASS} [class~="sticky"][class~="bg-orange-200"] {
-      background-color: #5c280d !important;
-      border-bottom: 1px solid rgba(253, 186, 116, 0.35) !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class~="sticky"][class~="bg-orange-200"] [class~="bg-white"] {
-      background-color: #262626 !important;
-      color: #f5f5f5 !important;
-      border-color: rgba(115, 115, 115, 0.4) !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class~="sticky"][class~="bg-orange-200"] svg[class*="fill-"] path,
-    html.${DARK_MODE_HTML_CLASS} [class~="sticky"][class~="bg-orange-200"] svg path {
-      fill: #f5f5f5 !important;
-    }
-
-    /* Bid section: ensure orange hint cards don't keep dark gray text */
-    html.${DARK_MODE_HTML_CLASS} #bid-section [class~="bg-orange-200"] [class*="text-gray-900"],
-    html.${DARK_MODE_HTML_CLASS} #bid-section [class~="bg-orange-200"] [class*="text-gray-800"],
-    html.${DARK_MODE_HTML_CLASS} #bid-section [class~="bg-orange-200"] [class*="text-gray-700"],
-    html.${DARK_MODE_HTML_CLASS} #bid-section [class~="bg-orange-200"] [class*="text-gray-600"] {
-      color: #fff7ed !important;
-    }
-
-    /* Bid section: keep top divider, remove box borders (OUTBID/WINNING blocks use md:border) */
-    html.${DARK_MODE_HTML_CLASS} #bid-section [class*="md:border"][class*="border-t-orange-200"],
-    html.${DARK_MODE_HTML_CLASS} #bid-section [class*="md:border"][class*="border-t-emerald-200"] {
-      border-left-width: 0 !important;
-      border-right-width: 0 !important;
-      border-bottom-width: 0 !important;
-      border-top-width: 1px !important;
-      border-left-color: transparent !important;
-      border-right-color: transparent !important;
-      border-bottom-color: transparent !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #bid-section [class*="md:border"][class*="border-t-orange-200"] {
-      border-top-color: rgba(253, 186, 116, 0.55) !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #bid-section [class*="md:border"][class*="border-t-emerald-200"] {
-      border-top-color: rgba(52, 211, 153, 0.55) !important;
-    }
-
-    /* Lighter orange surfaces (e.g. thank-you strip) — use class~ to avoid matching bg-orange-500 */
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-50"],
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-50/"],
-    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-50"],
-    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-50"],
-    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-50"] {
-      background-color: #5c280d !important;
-      color: #ffedd5 !important;
-      border-color: rgba(253, 186, 116, 0.5) !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-50"] .font-bold,
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-50/"] .font-bold,
-    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-50"] .font-bold,
-    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-50"] .font-bold,
-    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-50"] .font-bold,
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-50"] p,
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-50/"] p,
-    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-50"] p,
-    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-50"] p,
-    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-50"] p,
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-50"] div,
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-50/"] div,
-    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-50"] div,
-    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-50"] div,
-    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-50"] div {
-      color: #fff7ed !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class~="bg-orange-50"] a,
-    html.${DARK_MODE_HTML_CLASS} [class*="bg-orange-50/"] a,
-    html.${DARK_MODE_HTML_CLASS} [class*="sm:bg-orange-50"] a,
-    html.${DARK_MODE_HTML_CLASS} [class*="md:bg-orange-50"] a,
-    html.${DARK_MODE_HTML_CLASS} [class*="lg:bg-orange-50"] a {
-      color: #fdba74 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"][class*="ring-emerald"],
-    html.${DARK_MODE_HTML_CLASS} [data-ax="item-card-container"][class*="outline-emerald"],
-    html.${DARK_MODE_HTML_CLASS} [class*="ring-emerald-"],
-    html.${DARK_MODE_HTML_CLASS} [class*="outline-emerald"] {
-      --tw-ring-color: rgba(5, 150, 105, 0.65) !important;
-      outline-color: #047857 !important;
-      border-color: #047857 !important;
-    }
-
-    /* Dashboard appointments card (CSS-module classes; not always Tailwind bg-*) */
-    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"],
-    html.${DARK_MODE_HTML_CLASS} [class*="__my-appointments-card-container"] {
-      background-color: #1a1a1a !important;
-      color: #e5e5e5 !important;
-      border-color: #404040 !important;
-      border-radius: 14px !important;
-      overflow: hidden !important;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35) !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] > div {
-      background-color: #1a1a1a !important;
-      color: #e5e5e5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointments-card-content"],
-    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointments-line-item-container"],
-    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointment-card-footer"] {
-      background-color: #1a1a1a !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointment-card-title"],
-    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointments-line-item-text"] {
-      color: #f5f5f5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [data-ax="appointments-card"] [class*="__my-appointments-line-item-caption"] {
-      color: #a3a3a3 !important;
-    }
-
-    /* Location + hours card (embedded Google Map — keep controls/attribution readable) */
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"],
-    html.${DARK_MODE_HTML_CLASS} [class*="__card-base"][class*="__location-hours-card"] {
-      background-color: #1a1a1a !important;
-      color: #e5e5e5 !important;
-      border-color: #404040 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-card-content"] h4,
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-card-content"] p,
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-card-content"] li,
-    html.${DARK_MODE_HTML_CLASS} [class*="__hours-operations-list"],
-    html.${DARK_MODE_HTML_CLASS} [class*="__hours-operations-bold-text"] {
-      color: #e5e5e5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] svg:not([class*="fill-"]) path {
-      fill: #e5e5e5 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] [style*="229, 227, 223"] {
-      background-color: #2a2a2a !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style {
-      color-scheme: light;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style-mtc button,
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-control-active,
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-svpc,
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] gmp-internal-camera-control button {
-      background-color: #ffffff !important;
-      color: #202124 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style-cc span,
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style-cc a,
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style-cc button {
-      color: #202124 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gm-style-cc div[style*="245, 245, 245"] {
-      background-color: #e8e8e8 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} [class*="__location-hours-card"] .gmnoscreen div {
-      background-color: #e8e8e8 !important;
-      color: #202124 !important;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #${CARD_ID} {
-      --nellis-compare-background: #262626;
-      --nellis-compare-text: #e5e5e5;
-      --nellis-compare-heading: #fafafa;
-      --nellis-compare-muted: #a3a3a3;
-      --nellis-compare-border: rgba(82, 82, 82, 0.55);
-      --nellis-compare-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #${CARD_ID} .nellis-compare__image-wrap {
-      background: #ffffff;
-      border: 0;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} #${CARD_ID} .nellis-compare__image {
-      background: #ffffff;
-    }
-
-    html.${DARK_MODE_HTML_CLASS} .nellis-export-button {
-      background: #262626;
-      color: #e5e5e5;
-      border-color: rgba(115, 115, 115, 0.45);
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-    }
-
-    @media (max-width: 720px) {
-      #${CARD_ID} .nellis-compare__body {
-        grid-template-columns: 1fr;
-      }
-
-      #${CARD_ID} .nellis-compare__image-wrap {
-        width: 100%;
-        max-width: 120px;
-      }
-    }
-  `;
-
-  (document.head || document.documentElement).appendChild(style);
-}

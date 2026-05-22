@@ -21,6 +21,8 @@ const PRICE_SELECTORS = [
   '[data-testid*="price"]',
 ];
 
+const EXTENSION_UI_SELECTOR = '#nellis-amazon-compare-card';
+
 const NELLIS_ONLY_TITLE_PATTERNS = [
   /\bnellis variety box\b/i,
 ];
@@ -29,14 +31,48 @@ export function isNellisItemPage(locationObject = window.location) {
   return isNellisAuctionSite(locationObject) && /^\/p\/[^/]+\/\d+/.test(locationObject.pathname);
 }
 
-export function extractNellisItem(root = document) {
+export function parseNellisItemTitleFromPathname(pathname) {
+  if (!pathname || typeof pathname !== 'string') {
+    return '';
+  }
+  const match = pathname.match(/^\/p\/([^/]+)\/\d+/);
+  if (!match) {
+    return '';
+  }
+  try {
+    return decodeURIComponent(match[1])
+      .replace(/[-_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  } catch {
+    return match[1]
+      .replace(/[-_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+}
+
+export function parseNellisItemTitleFromDocumentTitle(title) {
+  const value = String(title || '').trim();
+  if (!value) {
+    return '';
+  }
+
+  return value
+    .replace(/\s+for sale\s+\|\s+.*$/i, '')
+    .replace(/\s+\|\s+Nellis Auction\s*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function extractNellisItem(root = document, { allowEmptyTitle = false } = {}) {
   const title = extractText(root, TITLE_SELECTORS);
-  if (!title) {
+  if (!title && !allowEmptyTitle) {
     return null;
   }
 
   return {
-    title,
+    title: title || '',
     imageSrc: extractImage(root, IMAGE_SELECTORS),
     price: extractText(root, PRICE_SELECTORS),
   };
@@ -184,82 +220,11 @@ export function findItemDetailsAnchor(root = document) {
   );
 }
 
-export function findTitleDescriptionAnchor(root = document) {
-  // 1) Prefer a dedicated description/details card (more stable than the h1 header region).
-  const descriptionSelectorMatch = [
-    '[data-ax*="description"]',
-    '[data-testid*="description"]',
-    '[class*="description"]',
-    '[class*="Description"]',
-    '[class*="details"]',
-    '[class*="Details"]',
-  ]
-    .map((selector) => root.querySelector(selector))
-    .find(Boolean);
-
-  if (descriptionSelectorMatch) {
-    return (
-      descriptionSelectorMatch.closest('section') ||
-      descriptionSelectorMatch.closest('article') ||
-      descriptionSelectorMatch.closest('div') ||
-      descriptionSelectorMatch
-    );
-  }
-
-  // 2) Headings-based fallback: find a "Description" heading and use its container.
-  const headings = Array.from(root.querySelectorAll('h1, h2, h3, h4, [role="heading"]'));
-  const descriptionHeading = headings.find((node) => {
-    const text = node.textContent?.trim().toLowerCase() || '';
-    return text === 'description' || text.includes('item description') || text.includes('description');
-  });
-
-  if (descriptionHeading) {
-    return (
-      descriptionHeading.closest('section') ||
-      descriptionHeading.closest('article') ||
-      descriptionHeading.closest('div') ||
-      descriptionHeading.parentElement ||
-      descriptionHeading
-    );
-  }
-
-  const selectorMatch = [
-    '[data-ax*="product-page-title"]',
-    '[data-ax*="product-title"]',
-    '[data-testid*="product-title"]',
-    '[class*="product-title"]',
-    '[class*="ProductTitle"]',
-    '[class*="title-card"]',
-    '[class*="TitleCard"]',
-    '[class*="description-card"]',
-    '[class*="DescriptionCard"]',
-  ]
-    .map((selector) => root.querySelector(selector))
-    .find(Boolean);
-
-  if (selectorMatch) {
-    return selectorMatch.closest('section') || selectorMatch.closest('article') || selectorMatch;
-  }
-
-  const titleNode = root.querySelector('main h1, h1');
-  if (!titleNode) {
-    return null;
-  }
-
-  // Prefer a nearby "card-ish" container for the title/description.
-  const candidates = [
-    titleNode.closest('section'),
-    titleNode.closest('article'),
-    titleNode.closest('div'),
-    titleNode.parentElement,
-  ].filter(Boolean);
-
-  return candidates[0] || null;
-}
-
 function extractText(root, selectors) {
   for (const selector of selectors) {
-    const node = root.querySelector(selector);
+    const node = Array.from(root.querySelectorAll(selector)).find(
+      (candidate) => !candidate.closest(EXTENSION_UI_SELECTOR)
+    );
     const text = node?.textContent?.trim();
     if (text) {
       return text;
@@ -271,7 +236,9 @@ function extractText(root, selectors) {
 
 function extractImage(root, selectors) {
   for (const selector of selectors) {
-    const node = root.querySelector(selector);
+    const node = Array.from(root.querySelectorAll(selector)).find(
+      (candidate) => !candidate.closest(EXTENSION_UI_SELECTOR)
+    );
     const src = node?.getAttribute('src') || node?.src;
     if (src) {
       return src;
@@ -284,4 +251,27 @@ function extractImage(root, selectors) {
 export function isNellisAuctionSite(locationObject = window.location) {
   const host = locationObject.hostname || '';
   return host === 'www.nellisauction.com' || host === 'nellisauction.com';
+}
+
+export function isNellisCartPage(locationObject = window.location) {
+  return isNellisAuctionSite(locationObject) && /^\/dashboard\/cart(\/|$)/.test(locationObject.pathname);
+}
+
+/** Dashboard auction list routes (active, won, etc.) that load item rows with thumbnails */
+export function isNellisDashboardAuctionListPage(locationObject = window.location) {
+  return isNellisAuctionSite(locationObject) && /^\/dashboard\/auctions\//.test(locationObject.pathname);
+}
+
+/** Product search / refine listing (Remix loaders use `products[].photos`, not `myAuctions.records`) */
+export function isNellisSearchPage(locationObject = window.location) {
+  if (!isNellisAuctionSite(locationObject)) {
+    return false;
+  }
+  const path = locationObject.pathname || '';
+  return /^\/search(\/|$)/.test(path) || /^\/dashboard\/search(\/|$)/.test(path);
+}
+
+/** Spotlight (deals, first-bid, saved-searches, …) — loaders use `dealAuctions` / `noBidAuctions` records */
+export function isNellisSpotlightPage(locationObject = window.location) {
+  return isNellisAuctionSite(locationObject) && /^\/spotlight(\/|$)/.test(locationObject.pathname || '');
 }
