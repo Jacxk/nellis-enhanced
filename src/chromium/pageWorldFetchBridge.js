@@ -137,8 +137,8 @@ import {
     return changed;
   }
 
-  function dispatchEmbeddedRemixLoaderData() {
-    if (embeddedLoaderDispatched) {
+  function dispatchEmbeddedRemixLoaderData({ force = false } = {}) {
+    if (embeddedLoaderDispatched && !force) {
       return true;
     }
     try {
@@ -162,6 +162,10 @@ import {
       return false;
     }
   }
+
+  document.addEventListener('nellis-enhanced-request-remix', () => {
+    dispatchEmbeddedRemixLoaderData({ force: true });
+  });
 
   function scheduleEmbeddedRemixLoaderData() {
     if (dispatchEmbeddedRemixLoaderData()) {
