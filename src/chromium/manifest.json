@@ -3,7 +3,7 @@
   "name": "Nellis Enhanced",
   "version": "2026.5.22",
   "description": "Nellis enhanced browser extension",
-  "permissions": ["notifications", "alarms", "storage"],
+  "permissions": [],
   "host_permissions": [
     "https://www.nellisauction.com/*",
     "https://nellisauction.com/*",
