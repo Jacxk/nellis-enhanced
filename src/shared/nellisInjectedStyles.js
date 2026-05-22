@@ -9,6 +9,7 @@ import {
   CART_ITEM_FEE_HINT_CLASS,
   DARK_MODE_HTML_CLASS,
   DARK_MODE_TOGGLE_ID,
+  NON_REFUNDABLE_PILL_CLASS,
   PREMIUM_HINT_CLASS,
   RECEIPTS_SUMMARY_ID,
   STYLE_ID,
@@ -38,6 +39,38 @@ export function injectStyles() {
     #${CARD_ID} * {
       box-sizing: border-box;
       font-family: inherit;
+    }
+
+    /* Item card notification pill (non-refundable) */
+    .${NON_REFUNDABLE_PILL_CLASS} {
+      position: absolute;
+      top: -10px;
+      right: -10px;
+      z-index: 50;
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      background: rgba(254, 226, 226, 0.95);
+      color: rgb(153, 27, 27);
+      font-size: 12px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0.01em;
+      text-transform: uppercase;
+      box-shadow: 0 8px 18px rgba(15, 23, 42, 0.10);
+      pointer-events: none;
+    }
+
+    [data-ax="item-card-container"] {
+      position: relative;
+    }
+
+    html.${DARK_MODE_HTML_CLASS} .${NON_REFUNDABLE_PILL_CLASS} {
+      border-color: rgba(248, 113, 113, 0.35);
+      background: rgba(153, 27, 27, 0.45);
+      color: rgba(254, 242, 242, 0.95);
     }
 
     #${CARD_ID} .nellis-compare__header {

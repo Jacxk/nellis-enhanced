@@ -28,5 +28,6 @@ export const RECEIPTS_PAGE_SIZE = 100;
 export const AUCTION_LIST_PHOTO_WRAP_CLASS = 'nellis-auction-list-photo-wrap';
 export const AUCTION_LIST_PHOTO_BAR_CLASS = 'nellis-auction-list-photo-nav';
 export const WATCHLIST_COUNT_CLASS = 'nellis-watchlist-count';
+export const NON_REFUNDABLE_PILL_CLASS = 'nellis-non-refundable-pill';
 export const ROUTE_WATCH_INTERVAL_MS = 500;
 export const BUYER_PREMIUM_RATE = 0.15;

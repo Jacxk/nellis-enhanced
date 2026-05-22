@@ -3,6 +3,7 @@ import {
   formatNellisCloseTimeTooltip,
   mergeAuctionListPhotoPayload,
   mergeCloseTimeFromRemixPayload,
+  mergeNonRefundableFromRemixPayload,
   mergeNellisItemPagePhotoPayload,
   mergeProductsPhotoPayload,
   mergeWatchlistCountFromRemixPayload,
@@ -61,6 +62,7 @@ import {
   ROUTE_WATCH_INTERVAL_MS,
   TIME_HINT_CLASS,
   WATCHLIST_COUNT_CLASS,
+  NON_REFUNDABLE_PILL_CLASS,
 } from '../shared/nellisUiConstants.js';
 import { injectStyles } from '../shared/nellisInjectedStyles.js';
 
@@ -109,6 +111,7 @@ let lastKnownUrl = window.location.href;
 const closeTimeByItemId = new Map();
 const watchlistCountByItemId = new Map();
 const auctionListPhotosByItemId = new Map();
+const nonRefundableByItemId = new Map();
 const prefetchedAuctionPhotoUrls = new Set();
 const activeAuctionPhotoPrefetches = new Map();
 let lastCartPickupsItems = [];
@@ -162,6 +165,7 @@ function handleRemixLoaderPayload(json, dataKey) {
   changed = mergeProductsPhotoPayload(json, auctionListPhotosByItemId) || changed;
   changed = mergeCloseTimeFromRemixPayload(json, closeTimeByItemId) || changed;
   changed = mergeWatchlistCountFromRemixPayload(json, watchlistCountByItemId) || changed;
+  changed = mergeNonRefundableFromRemixPayload(json, nonRefundableByItemId) || changed;
   if (isCartPage()) {
     const maybeItems = getCartPickUpsItemsFromRemixPayload(json);
     if (maybeItems) {
@@ -518,6 +522,7 @@ async function renderPageFeatures() {
   renderCartBulkUis(routeKey);
   renderNellisItemImageCarousels(routeKey);
   renderWatchlistCountBadges(routeKey);
+  renderNonRefundablePill(routeKey);
   renderDarkModeToggleButtons();
   renderNotificationsToggleButtons();
   attachPricePremiumHint();
@@ -1521,6 +1526,51 @@ function renderWatchlistCountBadges(_routeKey) {
     if (next instanceof HTMLElement && next.classList.contains(WATCHLIST_COUNT_CLASS)) {
       next.remove();
     }
+  }
+}
+
+function renderNonRefundablePill(_routeKey) {
+  if (!isNellisItemPage()) {
+    document.querySelector(`.${NON_REFUNDABLE_PILL_CLASS}`)?.remove();
+    return;
+  }
+
+  const itemId = parseNellisItemIdFromPathname(window.location.pathname);
+  if (!itemId) {
+    document.querySelector(`.${NON_REFUNDABLE_PILL_CLASS}`)?.remove();
+    return;
+  }
+
+  const isNonRefundable = nonRefundableByItemId.get(itemId);
+  const container =
+    document.querySelector('[data-ax="item-card-container"]') ||
+    document.querySelector('#bid-section [data-ax="item-card"]') ||
+    document.querySelector('#bid-section') ||
+    null;
+
+  if (!(container instanceof HTMLElement)) {
+    document.querySelector(`.${NON_REFUNDABLE_PILL_CLASS}`)?.remove();
+    return;
+  }
+
+  let pill = container.querySelector(`.${NON_REFUNDABLE_PILL_CLASS}`);
+
+  if (!isNonRefundable) {
+    pill?.remove();
+    return;
+  }
+
+  if (!pill) {
+    pill = document.createElement('div');
+    pill.className = NON_REFUNDABLE_PILL_CLASS;
+    pill.setAttribute('role', 'note');
+    pill.setAttribute('aria-label', 'Non-refundable item');
+    pill.textContent = 'Non‑refundable';
+    const computed = window.getComputedStyle(container);
+    if (computed.position === 'static') {
+      container.style.position = 'relative';
+    }
+    container.appendChild(pill);
   }
 }
 
