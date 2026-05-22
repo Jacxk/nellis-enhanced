@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Nellis Enhanced",
-  "version": "2026.4.14",
+  "version": "2026.4.27",
   "description": "Nellis enhanced browser extension",
-  "permissions": [],
+  "permissions": ["notifications", "alarms", "storage"],
   "host_permissions": [
     "https://www.nellisauction.com/*",
     "https://nellisauction.com/*",

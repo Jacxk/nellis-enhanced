@@ -1,4 +1,5 @@
 import {
+  extractNellisItemTitleFromRemixPayload,
   formatNellisCloseTimeTooltip,
   mergeAuctionListPhotoPayload,
   mergeCloseTimeFromRemixPayload,
@@ -22,15 +23,16 @@ import {
   isNellisCartPage,
   isNellisDashboardAuctionListPage,
   isNellisItemPage,
+  parseNellisItemTitleFromDocumentTitle,
+  parseNellisItemTitleFromPathname,
   isNellisSearchPage,
   isNellisSpotlightPage,
   isNellisOnlyItemTitle,
   parseCurrencyAmount,
 } from '../shared/nellisPage.js';
-import { sendRuntimeMessage } from '../shared/extensionApi.js';
+import { fetchNellisViaBackground, sendRuntimeMessage } from '../shared/extensionApi.js';
 import { getAmazonItemFromHtml } from '../shared/amazonSource.js';
 import { parseAmazonProductPage } from '../shared/productMatcher.js';
-
 import {
   AUCTION_LIST_PHOTO_BAR_CLASS,
   AUCTION_LIST_PHOTO_WRAP_CLASS,
@@ -53,6 +55,8 @@ import {
   PREMIUM_HINT_CLASS,
   PURCHASES_EXPORT_ID,
   PURCHASES_PAGE_SIZE,
+  RECEIPTS_PAGE_SIZE,
+  RECEIPTS_SUMMARY_ID,
   RENDER_DEBOUNCE_MS,
   RENDER_RETRY_MS,
   ROUTE_WATCH_INTERVAL_MS,
@@ -62,15 +66,38 @@ import {
 } from '../shared/nellisUiConstants.js';
 import { injectStyles } from '../shared/nellisInjectedStyles.js';
 
+const NOTIFICATIONS_SECTION_CLASS = 'nellis-notifications-section';
+const NOTIFICATIONS_SECTION_ID = 'nellis-notifications-section';
+const NOTIFICATIONS_TOGGLE_CLASS = 'nellis-notifications-toggle';
+const NOTIFICATIONS_TOGGLE_ID = 'nellis-notifications-toggle';
+const NOTIFICATIONS_STORAGE_KEY = 'nellisAuctionNotificationsEnabled';
+const OUTBID_TOGGLE_CLASS = 'nellis-outbid-notifications-toggle';
+const OUTBID_TOGGLE_ID = 'nellis-outbid-notifications-toggle';
+const OUTBID_STORAGE_KEY = 'nellisAuctionOutbidNotificationsEnabled';
+
+async function fetchNellisAsResponse(url, init = {}) {
+  const parsed = await fetchNellisViaBackground(url, init);
+  return new Response(parsed.bodyText, {
+    status: parsed.status,
+    statusText: parsed.statusText || '',
+  });
+}
+
 let activeRouteKey = '';
 let renderTimer = 0;
 let lookupSequence = 0;
+let amazonLookupInFlightKey = '';
+let amazonLookupRetryKey = '';
+let amazonLookupRetryAttempts = 0;
 let lastRenderedTitle = '';
 let pendingRouteKey = '';
 let pendingRouteAttempts = 0;
 let purchasesExportInFlight = false;
 let purchasesRouteKey = '';
 let purchasesRenderAttempts = 0;
+let receiptsRouteKey = '';
+let receiptsRenderAttempts = 0;
+let receiptsSummaryInFlight = false;
 let cartBulkRouteKey = '';
 let cartBulkRenderAttempts = 0;
 let cartBulkSaveInFlight = false;
@@ -78,13 +105,23 @@ let cartBulkCheckoutInFlight = false;
 let cartSortObserver = null;
 let cartSortRaf = 0;
 let cartSortApplying = false;
+let cartSortPausedUntilMs = 0;
 let lastKnownUrl = window.location.href;
 /** Item id → formatted local time for “time left” hover (from Remix loaders or HTML fallback). */
 const closeTimeByItemId = new Map();
 const watchlistCountByItemId = new Map();
 const auctionListPhotosByItemId = new Map();
 const nonRefundableByItemId = new Map();
+const prefetchedAuctionPhotoUrls = new Set();
+const activeAuctionPhotoPrefetches = new Map();
 let lastCartPickupsItems = [];
+/** Listing title from Remix loader for the current item page id (preferred over DOM for Amazon search). */
+let remixItemPageTitle = null;
+const AMAZON_RUNTIME_MESSAGE_TIMEOUT_MS = 12000;
+const closeTimeCache = new Map();
+let activeAuctionsPoller = 0;
+const activeAuctionsLastSecondsByItem = new Map();
+const activeAuctionsNotifiedItems = new Set();
 
 /**
  * Remix `fetch` runs in the page main world; the isolated content script cannot patch it.
@@ -140,6 +177,14 @@ function handleRemixLoaderPayload(json, dataKey) {
     const pageId = parseNellisItemIdFromPathname(window.location.pathname);
     if (pageId) {
       changed = mergeNellisItemPagePhotoPayload(json, pageId, auctionListPhotosByItemId) || changed;
+      const remixTitle = extractNellisItemTitleFromRemixPayload(json, pageId);
+      if (remixTitle) {
+        const prev = remixItemPageTitle;
+        if (prev?.itemId !== pageId || prev?.title !== remixTitle) {
+          remixItemPageTitle = { itemId: pageId, title: remixTitle };
+          changed = true;
+        }
+      }
     }
   }
   if (changed) {
@@ -159,6 +204,15 @@ document.addEventListener('nellis-enhanced-remix', (event) => {
   }
 });
 
+function requestEmbeddedRemixLoaderData() {
+  document.dispatchEvent(
+    new CustomEvent('nellis-enhanced-request-remix', {
+      bubbles: true,
+      composed: true,
+    })
+  );
+}
+
 // Content scripts are registered at document_start; running theme + CSS only from init()
 // (on DOMContentLoaded) lets the first paint happen in light mode before dark styles apply.
 applyStoredDarkMode();
@@ -173,8 +227,10 @@ if (document.readyState === 'loading') {
 function init() {
   injectStyles();
   applyStoredDarkMode();
+  cleanupActiveAuctionsNotifications();
   installDarkModeResyncListeners();
   installRouteListeners();
+  requestEmbeddedRemixLoaderData();
   scheduleRender();
 }
 
@@ -213,12 +269,13 @@ function installRouteListeners() {
   window.addEventListener('popstate', scheduleRender);
   window.addEventListener('pageshow', scheduleRender);
   window.addEventListener('load', scheduleRender);
+  installCartSortSubmissionGuard();
 
   const observer = new MutationObserver(() => {
     if (
       (isPurchasesPage() && !document.getElementById(PURCHASES_EXPORT_ID)) ||
       (isNellisCartPage() && needsCartBulkUiRefresh()) ||
-      (isNellisItemPage() && !document.getElementById(CARD_ID)) ||
+      needsAmazonComparisonRefresh() ||
       (isNellisAuctionSite() && needsDarkModeToggleRender()) ||
       needsNellisItemImageCarouselRefresh() ||
       needsWatchlistCountRefresh() ||
@@ -254,7 +311,7 @@ function installRouteListeners() {
       return;
     }
 
-    if (isNellisItemPage() && !document.getElementById(CARD_ID)) {
+    if (needsAmazonComparisonRefresh()) {
       scheduleRender();
       return;
     }
@@ -280,9 +337,146 @@ function installRouteListeners() {
   }, ROUTE_WATCH_INTERVAL_MS);
 }
 
+function pauseCartSorting(ms = 5000) {
+  cartSortPausedUntilMs = Math.max(cartSortPausedUntilMs, Date.now() + ms);
+}
+
+function isCartSortingPaused() {
+  return Date.now() < cartSortPausedUntilMs;
+}
+
+function installCartSortSubmissionGuard() {
+  if (window.__nellisCartSortSubmissionGuardInstalled) {
+    return;
+  }
+  window.__nellisCartSortSubmissionGuardInstalled = true;
+
+  document.addEventListener(
+    'submit',
+    (event) => {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) {
+        return;
+      }
+      const action = form.getAttribute('action') || '';
+      if (!action.includes('/dashboard/cart')) {
+        return;
+      }
+      // Prevent sort DOM shuffles from racing cart mutation submits.
+      pauseCartSorting(5000);
+    },
+    true
+  );
+}
+
 function scheduleRender() {
   window.clearTimeout(renderTimer);
   renderTimer = window.setTimeout(renderPageFeatures, RENDER_DEBOUNCE_MS);
+}
+
+function needsAmazonComparisonRefresh() {
+  if (!isNellisItemPage()) {
+    return false;
+  }
+
+  const card = document.getElementById(CARD_ID);
+  if (!card) {
+    return true;
+  }
+
+  const state = card.dataset.compareState || '';
+  if (state === 'ready') {
+    return false;
+  }
+
+  const candidateTitle = buildNellisItemForAmazonCompare()?.title || '';
+  if (!candidateTitle) {
+    return false;
+  }
+
+  const lookupKey = `${window.location.pathname}${window.location.search}\n${candidateTitle}`;
+  // If the visible card is unresolved and no matching lookup is running, trigger one.
+  if (amazonLookupInFlightKey !== lookupKey) {
+    return true;
+  }
+
+  return candidateTitle !== lastRenderedTitle;
+}
+
+function scheduleAmazonLookupRetry(routeKey, title) {
+  const retryKey = `${routeKey}\n${title}`;
+  if (amazonLookupRetryKey !== retryKey) {
+    amazonLookupRetryKey = retryKey;
+    amazonLookupRetryAttempts = 0;
+  }
+
+  if (amazonLookupRetryAttempts >= 4) {
+    return false;
+  }
+
+  amazonLookupRetryAttempts += 1;
+  window.setTimeout(() => {
+    if (isNellisItemPage() && `${window.location.pathname}${window.location.search}` === routeKey) {
+      activeRouteKey = '';
+      scheduleRender();
+    }
+  }, 1500 * amazonLookupRetryAttempts);
+
+  return true;
+}
+
+function sendAmazonRuntimeMessage(message) {
+  let timeoutId = 0;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(`${message.type} timed out.`));
+    }, AMAZON_RUNTIME_MESSAGE_TIMEOUT_MS);
+  });
+
+  return Promise.race([sendRuntimeMessage(message), timeout]).finally(() => {
+    window.clearTimeout(timeoutId);
+  });
+}
+
+function isUsableNellisItemTitle(title) {
+  const normalized = String(title || '').trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return !new Set([
+    'amazon',
+    'nellis auction',
+    'item details',
+    'time left',
+    'current price',
+    'seller',
+    'pickup location',
+  ]).has(normalized);
+}
+
+/**
+ * Prefer full item titles for Amazon search. The URL slug is only a last-resort
+ * fallback because it can omit important terms and produce Amazon "no results".
+ */
+function buildNellisItemForAmazonCompare() {
+  const pageId = parseNellisItemIdFromPathname(window.location.pathname);
+  const dom = extractNellisItem(document, { allowEmptyTitle: true });
+  const remixTitle =
+    pageId && remixItemPageTitle?.itemId === pageId ? remixItemPageTitle.title.trim() : '';
+  const domTitle = isUsableNellisItemTitle(dom?.title) ? dom.title.trim() : '';
+  const documentTitle = isUsableNellisItemTitle(document.title)
+    ? parseNellisItemTitleFromDocumentTitle(document.title)
+    : '';
+  const urlTitle = parseNellisItemTitleFromPathname(window.location.pathname);
+  const title = remixTitle || domTitle || documentTitle || urlTitle;
+  if (!title) {
+    return null;
+  }
+  return {
+    title,
+    imageSrc: dom?.imageSrc || '',
+    price: dom?.price || '',
+  };
 }
 
 /**
@@ -299,7 +493,7 @@ function primeComparisonCardSlot() {
     return;
   }
 
-  const nellisItem = extractNellisItem();
+  const nellisItem = buildNellisItemForAmazonCompare();
   if (nellisItem?.title && isNellisOnlyItemTitle(nellisItem.title)) {
     removeExistingCard();
     return;
@@ -324,14 +518,17 @@ async function renderPageFeatures() {
     primeComparisonCardSlot();
   }
   renderPurchasesExportButton(routeKey);
+  renderReceiptsSummary(routeKey);
   renderCartBulkUis(routeKey);
   renderNellisItemImageCarousels(routeKey);
   renderWatchlistCountBadges(routeKey);
   renderNonRefundablePill(routeKey);
   renderDarkModeToggleButtons();
+  renderNotificationsToggleButtons();
   attachPricePremiumHint();
   attachBidTotalPremiumHint();
   attachTimeEndHint();
+  syncActiveAuctionsNotifications(routeKey);
   attachCartItemFeeHint();
 
   if (!isNellisItemPage()) {
@@ -354,7 +551,7 @@ async function renderComparisonCard(routeKey) {
   }
 
   const itemDetailsAnchor = findItemDetailsAnchor();
-  const nellisItem = extractNellisItem();
+  const nellisItem = buildNellisItemForAmazonCompare();
 
   if (!itemDetailsAnchor) {
     if (pendingRouteAttempts < MAX_RENDER_RETRIES) {
@@ -387,13 +584,28 @@ async function renderComparisonCard(routeKey) {
   const titleChanged = nellisItem.title !== lastRenderedTitle;
   const routeChanged = routeKey !== activeRouteKey;
   const existingCard = document.getElementById(CARD_ID);
+  const existingState = existingCard?.dataset.compareState || '';
+  const lookupKey = `${routeKey}\n${nellisItem.title}`;
 
-  if (!titleChanged && !routeChanged && existingCard) {
+  if (!titleChanged && !routeChanged && existingCard && existingState === 'ready') {
+    return;
+  }
+
+  // Avoid thrashing on hard-load hydration: if a lookup for this exact
+  // route/title is already running, don't start another one.
+  if (amazonLookupInFlightKey === lookupKey) {
     return;
   }
 
   activeRouteKey = routeKey;
   lastRenderedTitle = nellisItem.title;
+  const retryKey = lookupKey;
+  if (amazonLookupRetryKey !== retryKey) {
+    amazonLookupRetryKey = retryKey;
+    amazonLookupRetryAttempts = 0;
+  }
+
+  amazonLookupInFlightKey = lookupKey;
 
   const card = ensureCard(itemDetailsAnchor);
   updateCardState(card, {
@@ -404,26 +616,44 @@ async function renderComparisonCard(routeKey) {
   const currentLookup = ++lookupSequence;
 
   try {
-    const response = await sendRuntimeMessage({
+    const response = await sendAmazonRuntimeMessage({
       type: 'FETCH_AMAZON_SEARCH_HTML',
       title: nellisItem.title,
     });
+
+    if (!response?.html) {
+      throw new Error('Amazon search returned no HTML.');
+    }
 
     const searchResultItem = getAmazonItemFromHtml(nellisItem.title, response?.html);
     let amazonItem = searchResultItem;
 
     if (searchResultItem?.url) {
-      const productResponse = await sendRuntimeMessage({
-        type: 'FETCH_AMAZON_PRODUCT_HTML',
-        url: searchResultItem.url,
+      if (currentLookup !== lookupSequence) {
+        return;
+      }
+
+      updateCardState(card, {
+        state: 'ready',
+        nellisItem,
+        amazonItem: searchResultItem,
       });
 
-      const productPageItem = parseAmazonProductPage(productResponse?.html, searchResultItem.url);
-      if (productPageItem) {
-        amazonItem = {
-          ...searchResultItem,
-          ...productPageItem,
-        };
+      try {
+        const productResponse = await sendAmazonRuntimeMessage({
+          type: 'FETCH_AMAZON_PRODUCT_HTML',
+          url: searchResultItem.url,
+        });
+
+        const productPageItem = parseAmazonProductPage(productResponse?.html, searchResultItem.url);
+        if (productPageItem) {
+          amazonItem = {
+            ...searchResultItem,
+            ...productPageItem,
+          };
+        }
+      } catch (error) {
+        console.warn('[NellisCompare] Failed to enrich Amazon item:', error);
       }
     }
 
@@ -436,10 +666,22 @@ async function renderComparisonCard(routeKey) {
       nellisItem,
       amazonItem: amazonItem || null,
     });
+
+    if (!hasRenderableAmazonItem(amazonItem)) {
+      scheduleAmazonLookupRetry(routeKey, nellisItem.title);
+    }
   } catch (error) {
     console.error('[NellisCompare] Failed to load Amazon item:', error);
 
     if (currentLookup !== lookupSequence) {
+      return;
+    }
+
+    if (scheduleAmazonLookupRetry(routeKey, nellisItem.title)) {
+      updateCardState(card, {
+        state: 'loading',
+        nellisItem,
+      });
       return;
     }
 
@@ -448,6 +690,10 @@ async function renderComparisonCard(routeKey) {
       nellisItem,
       amazonItem: null,
     });
+  } finally {
+    if (amazonLookupInFlightKey === lookupKey) {
+      amazonLookupInFlightKey = '';
+    }
   }
 }
 
@@ -456,6 +702,7 @@ function cleanupItemComparison(routeKey) {
   lastRenderedTitle = '';
   pendingRouteKey = '';
   pendingRouteAttempts = 0;
+  remixItemPageTitle = null;
   removeExistingCard();
 }
 
@@ -506,6 +753,7 @@ function updateCardState(card, { state, nellisItem, amazonItem }) {
   const linkNode = card.querySelector('[data-role="link"]');
 
   if (state === 'loading') {
+    card.dataset.compareState = 'loading';
     bodyNode.hidden = true;
     statusNode.hidden = false;
     statusNode.textContent = 'Loading Amazon item...';
@@ -513,12 +761,14 @@ function updateCardState(card, { state, nellisItem, amazonItem }) {
   }
 
   if (state === 'empty' || !amazonItem?.url) {
+    card.dataset.compareState = 'empty';
     bodyNode.hidden = true;
     statusNode.hidden = false;
     statusNode.textContent = 'Amazon item unavailable.';
     return;
   }
 
+  card.dataset.compareState = 'ready';
   statusNode.hidden = true;
   bodyNode.hidden = false;
 
@@ -568,7 +818,17 @@ function applyNativeCardStyling(card, itemDetailsAnchor) {
 }
 
 function pickStyleValue(value, fallback) {
-  if (!value || value === 'rgba(0, 0, 0, 0)' || value === 'none' || value === 'normal') {
+  if (!value || value === 'none' || value === 'normal') {
+    return fallback;
+  }
+
+  const normalized = String(value).trim().toLowerCase();
+  if (
+    normalized === 'transparent' ||
+    normalized === 'rgba(0, 0, 0, 0)' ||
+    normalized === 'rgba(0,0,0,0)' ||
+    /^rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*0(?:\.0+)?\s*\)$/.test(normalized)
+  ) {
     return fallback;
   }
 
@@ -860,9 +1120,8 @@ async function handleTimeHintHover(event) {
   container.setAttribute('data-time-tooltip', 'Loading...');
 
   try {
-    const response = await fetch(itemUrl, {
+    const response = await fetchNellisAsResponse(itemUrl, {
       method: 'GET',
-      credentials: 'include',
       headers: {
         accept: 'text/html,application/xhtml+xml',
       },
@@ -999,6 +1258,10 @@ function isPurchasesPage(locationObject = window.location) {
   return locationObject.pathname === '/dashboard/purchases';
 }
 
+function isReceiptsPage(locationObject = window.location) {
+  return locationObject.pathname === '/dashboard/receipts';
+}
+
 function isCartPage(locationObject = window.location) {
   return locationObject.pathname === '/dashboard/cart' || locationObject.pathname.startsWith('/dashboard/cart/');
 }
@@ -1026,6 +1289,86 @@ function needsNellisItemImageCarouselRefresh() {
   }
 
   return false;
+}
+
+function normalizePhotoUrl(url) {
+  if (!url || typeof url !== 'string') {
+    return '';
+  }
+  try {
+    return new URL(url, window.location.href).toString();
+  } catch {
+    return '';
+  }
+}
+
+function getItemIdFromAuctionCard(card) {
+  const cardLink = card.querySelector(
+    'a[data-ax="item-card-title-link"], a[data-ax="item-card-image-link"]'
+  );
+  return parseNellisItemIdFromHref(cardLink?.getAttribute('href'));
+}
+
+function prefetchAuctionListPhotos(itemId, currentSrc = '') {
+  const photos = auctionListPhotosByItemId.get(itemId);
+  if (!photos || photos.length < 2) {
+    return;
+  }
+
+  const activeUrl = normalizePhotoUrl(currentSrc);
+  for (const photo of photos) {
+    const url = normalizePhotoUrl(photo);
+    if (!url || url === activeUrl || prefetchedAuctionPhotoUrls.has(url)) {
+      continue;
+    }
+
+    prefetchedAuctionPhotoUrls.add(url);
+    const image = new Image();
+    activeAuctionPhotoPrefetches.set(url, image);
+
+    const cleanup = () => {
+      activeAuctionPhotoPrefetches.delete(url);
+    };
+    const allowRetry = () => {
+      prefetchedAuctionPhotoUrls.delete(url);
+      cleanup();
+    };
+
+    image.addEventListener('load', cleanup, { once: true });
+    image.addEventListener('error', allowRetry, { once: true });
+    image.decoding = 'async';
+    image.src = url;
+  }
+}
+
+function prefetchAuctionListPhotosForCard(card) {
+  if (!(card instanceof HTMLElement)) {
+    return;
+  }
+
+  const itemId = getItemIdFromAuctionCard(card);
+  if (!itemId) {
+    return;
+  }
+
+  const image = card.querySelector(
+    `.${AUCTION_LIST_PHOTO_WRAP_CLASS} img, a[data-ax="item-card-image-link"] img`
+  );
+  const currentSrc =
+    image instanceof HTMLImageElement ? image.currentSrc || image.src || '' : '';
+  prefetchAuctionListPhotos(itemId, currentSrc);
+}
+
+function bindAuctionPhotoPrefetch(anchor) {
+  const card = anchor.closest('[data-ax="item-card-container"]') || anchor;
+  if (!(card instanceof HTMLElement) || card.dataset.nellisPhotoPrefetchBound === 'true') {
+    return;
+  }
+
+  const handlePrefetch = () => prefetchAuctionListPhotosForCard(card);
+  card.addEventListener('pointerenter', handlePrefetch);
+  card.addEventListener('focusin', handlePrefetch);
+  card.dataset.nellisPhotoPrefetchBound = 'true';
 }
 
 function attachNellisPhotoCarouselToAnchor(anchor, itemId, routeKey) {
@@ -1115,6 +1458,7 @@ function renderNellisItemImageCarousels(routeKey) {
     if (!itemId) {
       continue;
     }
+    bindAuctionPhotoPrefetch(anchor);
     attachNellisPhotoCarouselToAnchor(anchor, itemId, routeKey);
   }
 }
@@ -1335,6 +1679,210 @@ function removePurchasesExportButton() {
   if (button) {
     button.remove();
   }
+}
+
+function renderReceiptsSummary(routeKey) {
+  if (!isReceiptsPage()) {
+    receiptsRouteKey = '';
+    receiptsRenderAttempts = 0;
+    removeReceiptsSummary();
+    return;
+  }
+
+  if (receiptsRouteKey !== routeKey) {
+    receiptsRouteKey = routeKey;
+    receiptsRenderAttempts = 0;
+  }
+
+  const anchor = findReceiptsAnchor();
+  if (!anchor) {
+    if (receiptsRenderAttempts < MAX_RENDER_RETRIES) {
+      receiptsRenderAttempts += 1;
+      window.setTimeout(scheduleRender, RENDER_RETRY_MS);
+    }
+    return;
+  }
+
+  receiptsRenderAttempts = 0;
+
+  let summary = document.getElementById(RECEIPTS_SUMMARY_ID);
+  if (!summary) {
+    summary = document.createElement('div');
+    summary.id = RECEIPTS_SUMMARY_ID;
+    summary.innerHTML = `
+      <div class="flex flex-wrap justify-end gap-2">
+        <div class="flex items-baseline gap-2 px-3 py-2 bg-white rounded-xl">
+          <div class="text-label-md opacity-70">Spent</div>
+          <div class="text-title-sm font-semibold text-neutral-800" data-role="spent">Loading…</div>
+        </div>
+        <div class="flex items-baseline gap-2 px-3 py-2 bg-white rounded-xl">
+          <div class="text-label-md opacity-70">Returned</div>
+          <div class="text-title-sm font-semibold text-neutral-800" data-role="returned">Loading…</div>
+        </div>
+        <div class="flex items-baseline gap-2 px-3 py-2 bg-white rounded-xl">
+          <div class="text-label-md opacity-70">Total</div>
+          <div class="text-title-sm font-semibold text-neutral-800" data-role="total">Loading…</div>
+        </div>
+      </div>
+    `;
+  }
+
+  summary.dataset.routeKey = routeKey;
+
+  if (summary.parentElement !== anchor) {
+    anchor.appendChild(summary);
+  }
+
+  void refreshReceiptsSummary(routeKey);
+}
+
+function findReceiptsAnchor(root = document) {
+  const headings = Array.from(root.querySelectorAll('h1, h2, h3, [role="heading"]'));
+  const receiptsHeading = headings.find((node) =>
+    node.textContent?.trim().toLowerCase().includes('receipts')
+  );
+
+  if (receiptsHeading) {
+    const headerRow = receiptsHeading.closest('.flex.justify-between.items-center');
+    if (headerRow instanceof HTMLElement) {
+      return headerRow;
+    }
+    if (receiptsHeading.parentElement) {
+      return receiptsHeading.parentElement;
+    }
+  }
+
+  return root.querySelector('main') || null;
+}
+
+function removeReceiptsSummary() {
+  const node = document.getElementById(RECEIPTS_SUMMARY_ID);
+  if (node) {
+    node.remove();
+  }
+}
+
+async function refreshReceiptsSummary(routeKey) {
+  const summary = document.getElementById(RECEIPTS_SUMMARY_ID);
+  if (!(summary instanceof HTMLElement)) {
+    return;
+  }
+  if (summary.dataset.routeKey !== routeKey) {
+    return;
+  }
+  if (receiptsSummaryInFlight) {
+    return;
+  }
+
+  receiptsSummaryInFlight = true;
+  try {
+    const receipts = await fetchAllReceipts();
+    const spent = receipts.reduce((acc, record) => {
+      const total = Number(record?.total);
+      return acc + (Number.isFinite(total) && total > 0 ? total : 0);
+    }, 0);
+
+    // Some receipts APIs represent returns as negative totals. Treat any negative total as a return.
+    const returned = receipts.reduce((acc, record) => {
+      const total = Number(record?.total);
+      if (!Number.isFinite(total)) {
+        return acc;
+      }
+      if (total < 0) {
+        return acc + total; // negative
+      }
+      const count = Number(record?.returnCount) || 0;
+      if (count > 0) {
+        return acc - Math.abs(total); // force return dollars to reduce net
+      }
+      return acc;
+    }, 0);
+
+    const net = spent + returned;
+
+    const spentNode = summary.querySelector('[data-role="spent"]');
+    const returnedNode = summary.querySelector('[data-role="returned"]');
+    const totalNode = summary.querySelector('[data-role="total"]');
+    if (spentNode) spentNode.textContent = formatCurrency(spent);
+    if (returnedNode) {
+      const returnedAbs = Math.abs(returned);
+      returnedNode.textContent = returnedAbs === 0 ? formatCurrency(0) : `-${formatCurrency(returnedAbs)}`;
+    }
+    if (totalNode) totalNode.textContent = formatCurrency(net);
+  } catch (error) {
+    console.error('[NellisCompare] Failed to load receipts summary:', error);
+    const spentNode = summary.querySelector('[data-role="spent"]');
+    const returnedNode = summary.querySelector('[data-role="returned"]');
+    const totalNode = summary.querySelector('[data-role="total"]');
+    if (spentNode) spentNode.textContent = '—';
+    if (returnedNode) returnedNode.textContent = '—';
+    if (totalNode) totalNode.textContent = '—';
+  } finally {
+    receiptsSummaryInFlight = false;
+  }
+}
+
+async function fetchAllReceipts() {
+  const allRecords = [];
+  let page = 0;
+  let total = Infinity;
+
+  while (allRecords.length < total) {
+    const pageData = await fetchReceiptsPage({ page, size: RECEIPTS_PAGE_SIZE });
+    const records = getReceiptsRecords(pageData);
+    const nextTotal = Number(pageData?.total);
+    total = Number.isFinite(nextTotal) && nextTotal >= 0 ? nextTotal : records.length;
+
+    if (!records.length) {
+      break;
+    }
+
+    allRecords.push(...records);
+    page += 1;
+  }
+
+  return allRecords.slice(0, Number.isFinite(total) ? total : allRecords.length);
+}
+
+async function fetchReceiptsPage({ page, size }) {
+  const endpointUrl = new URL('/dashboard/receipts', window.location.origin);
+  endpointUrl.searchParams.set('_data', 'routes/dashboard.receipts._index');
+  endpointUrl.searchParams.set('_p', `s:${size},n:${page}`);
+
+  const response = await fetchNellisAsResponse(endpointUrl.toString(), {
+    method: 'GET',
+    headers: {
+      accept: 'application/json, text/plain, */*',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Receipts request failed with status ${response.status}`);
+  }
+
+  const responseText = await response.text();
+  const parsed = JSON.parse(responseText);
+  return getReceiptsPageData(parsed);
+}
+
+function getReceiptsPageData(payload) {
+  if (payload?.page && Array.isArray(payload.page.records)) {
+    return payload.page;
+  }
+  if (payload?.data?.page && Array.isArray(payload.data.page.records)) {
+    return payload.data.page;
+  }
+  if (Array.isArray(payload?.records)) {
+    return payload;
+  }
+  if (Array.isArray(payload?.data?.records)) {
+    return payload.data;
+  }
+  return { total: 0, records: [] };
+}
+
+function getReceiptsRecords(pageData) {
+  return Array.isArray(pageData?.records) ? pageData.records : [];
 }
 
 function isCartRowBulkSaveForLaterEligible(row) {
@@ -1676,7 +2224,13 @@ function parseCartDateMs(value) {
 }
 
 function getCartRowKeyFromItem(item) {
-  const buyNowId = item?.buyNowId ?? item?.buynowId ?? item?.buynowId;
+  const buyNowId =
+    item?.buyNowId ??
+    item?.buynowId ??
+    item?.buyNow?.id ??
+    item?.buy_now_id ??
+    item?.id ??
+    item?.itemId;
   return buyNowId == null ? '' : String(buyNowId);
 }
 
@@ -1727,6 +2281,81 @@ function buildCartItemDataIndex(items) {
   return map;
 }
 
+function normalizeCartText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getCartItemTitle(item) {
+  return String(
+    item?.leadDescription || item?.title || item?.itemTitle || item?.productTitle || item?.description || ''
+  );
+}
+
+function buildCartItemTitleIndex(items) {
+  const map = new Map();
+  for (const item of items) {
+    const norm = normalizeCartText(getCartItemTitle(item));
+    if (!norm) {
+      continue;
+    }
+    const bucket = map.get(norm);
+    if (bucket) {
+      bucket.push(item);
+    } else {
+      map.set(norm, [item]);
+    }
+  }
+  return map;
+}
+
+function extractCartRowTitle(row) {
+  const titleEl =
+    row.querySelector('a[href*="/p/"] p') ||
+    row.querySelector('a[aria-label*="Visit the product page"] p');
+  return titleEl?.textContent?.trim() || '';
+}
+
+function extractCartRowAmount(row) {
+  const feeHint = row.querySelector('[data-premium-source-amount]');
+  if (feeHint instanceof HTMLElement) {
+    const raw = feeHint.dataset.premiumSourceAmount;
+    const amount = Number(raw);
+    if (Number.isFinite(amount)) {
+      return amount;
+    }
+  }
+
+  const priceText = row.querySelector('.text-body-md, p')?.textContent || '';
+  const parsed = parseCurrencyAmount(priceText);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function extractCartRowDateWonMs(row) {
+  const text = row.textContent || '';
+  const match = text.match(/\bwon\b[:\s-]*([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?)/i);
+  if (!match?.[1]) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  return parseCartDateMs(match[1]);
+}
+
+const CART_SORT_OPTIONS = [
+  ['dateWon_desc', 'Date won (new → old)'],
+  ['dateWon_asc', 'Date won (old → new)'],
+  ['title_az', 'Title (A → Z)'],
+  ['title_za', 'Title (Z → A)'],
+  ['amount_desc', 'Bid amount (high → low)'],
+  ['amount_asc', 'Bid amount (low → high)'],
+];
+
+function getCartSortLabelForKey(key) {
+  const row = CART_SORT_OPTIONS.find(([v]) => v === key);
+  return row ? row[1] : CART_SORT_OPTIONS[0][1];
+}
+
 function renderCartSortDropdown(allRows) {
   if (!allRows?.length) {
     return;
@@ -1737,50 +2366,137 @@ function renderCartSortDropdown(allRows) {
     return;
   }
 
-  let wrap = document.getElementById(CART_SORT_DROPDOWN_ID)?.closest?.('.nellis-cart-sort');
+  let wrap = document.getElementById(CART_SORT_DROPDOWN_ID);
   if (!(wrap instanceof HTMLElement)) {
     wrap = document.createElement('div');
-    wrap.className = 'nellis-cart-sort';
+    wrap.id = CART_SORT_DROPDOWN_ID;
+    wrap.className = 'nellis-cart-sort relative block text-left min-w-72';
 
-    const label = document.createElement('label');
-    label.className = 'nellis-cart-sort__label';
-    label.textContent = 'Sort';
-    label.setAttribute('for', CART_SORT_DROPDOWN_ID);
+    const shell = document.createElement('div');
+    shell.className = 'relative block text-left min-w-72';
 
-    const select = document.createElement('select');
-    select.id = CART_SORT_DROPDOWN_ID;
-    select.className = 'nellis-cart-sort__select';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className =
+      'flex items-center justify-between w-full border border-solid border-gray-500 rounded-xl px-3 py-2 bg-white hover:border-gray-700 focus:outline-secondary shadow-md';
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', 'false');
+    btn.setAttribute('data-ax', 'nellis-cart-sort-trigger');
 
-    const options = [
-      ['dateWon_desc', 'Date won (new → old)'],
-      ['dateWon_asc', 'Date won (old → new)'],
-      ['title_az', 'Title (A → Z)'],
-      ['title_za', 'Title (Z → A)'],
-      ['amount_desc', 'Bid amount (high → low)'],
-      ['amount_asc', 'Bid amount (low → high)'],
-    ];
+    const textCol = document.createElement('div');
+    textCol.className = 'flex flex-col text-left';
 
-    select.append(
-      ...options.map(([value, text]) => {
-        const opt = document.createElement('option');
-        opt.value = value;
-        opt.textContent = text;
-        return opt;
-      })
+    const hint = document.createElement('p');
+    hint.className = 'cursor-pointer text-label-sm';
+    hint.textContent = 'Sort by';
+
+    const valueEl = document.createElement('p');
+    valueEl.className = 'font-semibold text-title-xs pr-2';
+    valueEl.dataset.role = 'nellis-cart-sort-value';
+
+    textCol.append(hint, valueEl);
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    svg.setAttribute('viewBox', '0 0 320 512');
+    svg.setAttribute('width', '20');
+    svg.setAttribute('height', '20');
+    svg.setAttribute('class', 'fill-secondary shrink-0 transition-transform duration-200');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute(
+      'd',
+      'M137.4 374.6c12.5 12.5 32.8 12.5 45.3 0l128-128c9.2-9.2 11.9-22.9 6.9-34.9s-16.6-19.8-29.6-19.8L32 192c-12.9 0-24.6 7.8-29.6 19.8s-2.2 25.7 6.9 34.9l128 128z'
     );
+    svg.appendChild(path);
 
-    select.addEventListener('change', () => {
-      const v = select.value || 'dateWon_desc';
-      setStoredCartSortKey(v);
-      applyCartSortToDom(v);
+    btn.append(textCol, svg);
+
+    const menu = document.createElement('ul');
+    menu.setAttribute('role', 'listbox');
+    menu.className =
+      'absolute left-0 right-0 z-50 mt-1 max-h-60 overflow-auto rounded-xl border border-solid border-gray-500 bg-white py-1 shadow-md hidden';
+    menu.hidden = true;
+
+    for (const [value, text] of CART_SORT_OPTIONS) {
+      const li = document.createElement('li');
+      li.setAttribute('role', 'none');
+      const optBtn = document.createElement('button');
+      optBtn.type = 'button';
+      optBtn.setAttribute('role', 'option');
+      optBtn.dataset.value = value;
+      optBtn.className =
+        'w-full px-3 py-2 text-left text-body-md hover:bg-neutral-100 focus:bg-neutral-100 focus:outline-none';
+      optBtn.textContent = text;
+      li.appendChild(optBtn);
+      menu.appendChild(li);
+    }
+
+    let docCloser = null;
+    const detachDocCloser = () => {
+      if (docCloser) {
+        document.removeEventListener('click', docCloser, true);
+        docCloser = null;
+      }
+    };
+
+    const closeMenu = () => {
+      menu.classList.add('hidden');
+      menu.hidden = true;
+      btn.setAttribute('aria-expanded', 'false');
+      svg.classList.remove('rotate-180');
+      detachDocCloser();
+    };
+
+    const openMenu = () => {
+      menu.classList.remove('hidden');
+      menu.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      svg.classList.add('rotate-180');
+    };
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!menu.hidden) {
+        closeMenu();
+        return;
+      }
+      openMenu();
+      detachDocCloser();
+      docCloser = (ev) => {
+        if (!wrap.contains(ev.target)) {
+          closeMenu();
+        }
+      };
+      window.setTimeout(() => document.addEventListener('click', docCloser, true), 0);
     });
 
-    wrap.append(label, select);
+    menu.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeMenu();
+        btn.focus();
+      }
+    });
+
+    for (const optBtn of menu.querySelectorAll('button[role="option"]')) {
+      optBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const v = optBtn.dataset.value || 'dateWon_desc';
+        setStoredCartSortKey(v);
+        applyCartSortToDom(v);
+        valueEl.textContent = optBtn.textContent || getCartSortLabelForKey(v);
+        closeMenu();
+      });
+    }
+
+    shell.append(btn, menu);
+    wrap.appendChild(shell);
   }
 
-  const select = wrap.querySelector(`#${CART_SORT_DROPDOWN_ID}`);
-  if (select instanceof HTMLSelectElement) {
-    select.value = getStoredCartSortKey();
+  const valueEl = wrap.querySelector('[data-role="nellis-cart-sort-value"]');
+  if (valueEl) {
+    valueEl.textContent = getCartSortLabelForKey(getStoredCartSortKey());
   }
 
   if (wrap.parentElement !== anchor || wrap !== anchor.firstElementChild) {
@@ -1790,6 +2506,9 @@ function renderCartSortDropdown(allRows) {
 
 function applyCartSortToDom(sortKey) {
   if (!isCartPage()) {
+    return;
+  }
+  if (isCartSortingPaused()) {
     return;
   }
 
@@ -1806,33 +2525,74 @@ function applyCartSortToDom(sortKey) {
   }
 
   const index = buildCartItemDataIndex(lastCartPickupsItems || []);
+  const titleIndex = buildCartItemTitleIndex(lastCartPickupsItems || []);
+  const rowSortValueCache = new WeakMap();
   const getDataForRow = (row) => {
-    const key = getCartRowKeyFromRow(row);
-    if (key && index.has(key)) {
-      return index.get(key);
+    if (rowSortValueCache.has(row)) {
+      return rowSortValueCache.get(row);
     }
-    return null;
+
+    const key = getCartRowKeyFromRow(row);
+    let data = key && index.has(key) ? index.get(key) : null;
+    if (!data) {
+      const rowTitle = extractCartRowTitle(row);
+      const bucket = titleIndex.get(normalizeCartText(rowTitle));
+      if (bucket?.length) {
+        if (bucket.length === 1) {
+          data = bucket[0];
+        } else {
+          const rowAmount = extractCartRowAmount(row);
+          data = bucket.reduce((best, candidate) => {
+            if (!best) {
+              return candidate;
+            }
+            const bestDelta = Math.abs((Number(best?.amount) || 0) - rowAmount);
+            const candidateDelta = Math.abs((Number(candidate?.amount) || 0) - rowAmount);
+            return candidateDelta < bestDelta ? candidate : best;
+          }, null);
+        }
+      }
+    }
+
+    const resolved = {
+      dateWonMs: parseCartDateMs(data?.dateWon),
+      amount: Number(data?.amount),
+      title: getCartItemTitle(data),
+    };
+
+    if (!Number.isFinite(resolved.dateWonMs) || resolved.dateWonMs === Number.NEGATIVE_INFINITY) {
+      resolved.dateWonMs = extractCartRowDateWonMs(row);
+    }
+    if (!Number.isFinite(resolved.amount)) {
+      resolved.amount = extractCartRowAmount(row);
+    }
+    if (!resolved.title) {
+      resolved.title = extractCartRowTitle(row);
+    }
+
+    rowSortValueCache.set(row, resolved);
+    return resolved;
   };
 
   const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
   const comparator = (aRow, bRow) => {
-    const a = getDataForRow(aRow) || {};
-    const b = getDataForRow(bRow) || {};
+    const a = getDataForRow(aRow);
+    const b = getDataForRow(bRow);
 
     switch (sortKey) {
       case 'dateWon_asc':
-        return parseCartDateMs(a.dateWon) - parseCartDateMs(b.dateWon);
+        return a.dateWonMs - b.dateWonMs;
       case 'amount_desc':
-        return (Number(b.amount) || 0) - (Number(a.amount) || 0);
+        return b.amount - a.amount;
       case 'amount_asc':
-        return (Number(a.amount) || 0) - (Number(b.amount) || 0);
+        return a.amount - b.amount;
       case 'title_az':
-        return collator.compare(String(a.leadDescription || ''), String(b.leadDescription || ''));
+        return collator.compare(a.title, b.title);
       case 'title_za':
-        return collator.compare(String(b.leadDescription || ''), String(a.leadDescription || ''));
+        return collator.compare(b.title, a.title);
       case 'dateWon_desc':
       default:
-        return parseCartDateMs(b.dateWon) - parseCartDateMs(a.dateWon);
+        return b.dateWonMs - a.dateWonMs;
     }
   };
 
@@ -2020,17 +2780,48 @@ async function postCartPickupsFormForRow(row, actionValue, errorLabel) {
   const actionUrl = new URL(action, window.location.origin).toString();
   const body = buildCartFormPostBody(form, actionValue);
 
-  const response = await fetch(actionUrl, {
+  const response = await fetchNellisAsResponse(actionUrl, {
     method: 'POST',
-    credentials: 'include',
     headers: {
       accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
       'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
     },
     body: body.toString(),
-    redirect: 'follow',
   });
 
+  if (!response.ok) {
+    throw new Error(`${errorLabel} failed with status ${response.status}.`);
+  }
+}
+
+function buildCartPickupsPostRequests(rows, actionValue) {
+  return rows.map((row) => {
+    const form = row.querySelector('form[action*="/dashboard/cart"]');
+    if (!(form instanceof HTMLFormElement)) {
+      throw new Error('Cart form not found for a selected row.');
+    }
+
+    const action = form.getAttribute('action');
+    if (!action) {
+      throw new Error('Cart form is missing an action URL.');
+    }
+
+    return {
+      actionUrl: new URL(action, window.location.origin).toString(),
+      body: buildCartFormPostBody(form, actionValue).toString(),
+    };
+  });
+}
+
+async function postCartPickupsFormFromSnapshot(actionUrl, body, errorLabel) {
+  const response = await fetchNellisAsResponse(actionUrl, {
+    method: 'POST',
+    headers: {
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+    },
+    body,
+  });
   if (!response.ok) {
     throw new Error(`${errorLabel} failed with status ${response.status}.`);
   }
@@ -2051,6 +2842,7 @@ async function handleCartBulkSaveForLater() {
   }
 
   cartBulkSaveInFlight = true;
+  pauseCartSorting(8000);
   syncCartBulkToolbar();
 
   const saveBtn = document.querySelector(`#${CART_BULK_TOOLBAR_ID} [data-role="save"]`);
@@ -2059,9 +2851,10 @@ async function handleCartBulkSaveForLater() {
   }
 
   try {
+    const requests = buildCartPickupsPostRequests(selectedRows, 'save-for-later');
     let index = 0;
-    for (const row of selectedRows) {
-      await postCartPickupsFormForRow(row, 'save-for-later', 'Save for later');
+    for (const request of requests) {
+      await postCartPickupsFormFromSnapshot(request.actionUrl, request.body, 'Save for later');
       index += 1;
       if (saveBtn instanceof HTMLButtonElement) {
         saveBtn.textContent = `Saving… (${index}/${selectedRows.length})`;
@@ -2092,6 +2885,7 @@ async function handleCartBulkAddToCheckout() {
   }
 
   cartBulkCheckoutInFlight = true;
+  pauseCartSorting(8000);
   syncCartBulkCheckoutToolbar();
 
   const addBtn = document.querySelector(`#${CART_BULK_CHECKOUT_TOOLBAR_ID} [data-role="add-checkout"]`);
@@ -2100,9 +2894,10 @@ async function handleCartBulkAddToCheckout() {
   }
 
   try {
+    const requests = buildCartPickupsPostRequests(selectedRows, 'add-to-checkout');
     let index = 0;
-    for (const row of selectedRows) {
-      await postCartPickupsFormForRow(row, 'add-to-checkout', 'Add to checkout');
+    for (const request of requests) {
+      await postCartPickupsFormFromSnapshot(request.actionUrl, request.body, 'Add to checkout');
       index += 1;
       if (addBtn instanceof HTMLButtonElement) {
         addBtn.textContent = `Adding… (${index}/${selectedRows.length})`;
@@ -2120,6 +2915,10 @@ async function handleCartBulkAddToCheckout() {
 
 function needsDarkModeToggleRender() {
   return isNellisAuctionSite() && !document.getElementById(DARK_MODE_TOGGLE_ID);
+}
+
+function needsNotificationsToggleRender() {
+  return isNellisAuctionSite() && Boolean(findDashboardAuctionsSidebar()) && !document.getElementById(NOTIFICATIONS_TOGGLE_ID);
 }
 
 function syncCriticalDarkModePaint() {
@@ -2169,6 +2968,113 @@ function syncDarkModeToggleButtons() {
   btn.setAttribute('aria-label', label);
   btn.title = label;
   btn.innerHTML = isDark ? DARK_MODE_ICON_SUN : DARK_MODE_ICON_MOON;
+}
+
+function readNotificationsEnabled() {
+  // Prefer extension storage so the background worker can read it.
+  // localStorage is retained as a backwards-compatible fallback.
+  // Note: This function is sync; extension storage is synced separately.
+  try {
+    return localStorage.getItem(NOTIFICATIONS_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeNotificationsEnabled(enabled) {
+  try {
+    localStorage.setItem(NOTIFICATIONS_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.set({ [NOTIFICATIONS_STORAGE_KEY]: Boolean(enabled) });
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function readOutbidNotificationsEnabled() {
+  try {
+    return localStorage.getItem(OUTBID_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeOutbidNotificationsEnabled(enabled) {
+  try {
+    localStorage.setItem(OUTBID_STORAGE_KEY, enabled ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+      chrome.storage.local.set({ [OUTBID_STORAGE_KEY]: Boolean(enabled) });
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+function syncNotificationsToggleButton() {
+  const btn = document.getElementById(NOTIFICATIONS_TOGGLE_ID);
+  if (!(btn instanceof HTMLElement)) {
+    return;
+  }
+
+  const enabled = readNotificationsEnabled();
+  const label = enabled ? 'Disable auction notifications' : 'Enable auction notifications';
+
+  btn.setAttribute('aria-pressed', String(enabled));
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+  const permissionLevel = btn.dataset.permissionLevel || 'unknown';
+  const isBlocked = permissionLevel === 'denied';
+  const stateText = isBlocked ? 'Blocked' : enabled ? 'On' : 'Off';
+  btn.innerHTML = `
+    <span aria-hidden="true"></span>
+    <div class="col-start-2 flex items-center justify-between gap-2 w-full">
+      <p class="text-neutral-800">3-min alerts</p>
+      <span class="text-body-sm font-semibold ${stateText === 'On' ? 'text-secondary' : stateText === 'Blocked' ? 'text-burgundy-800' : 'text-neutral-800'}">${stateText}</span>
+    </div>
+  `;
+}
+
+function handleNotificationsToggle() {
+  const next = !readNotificationsEnabled();
+  writeNotificationsEnabled(next);
+  sendRuntimeMessage({
+    type: 'SET_AUCTION_NOTIFICATIONS_ENABLED',
+    enabled: next,
+    outbidEnabled: readOutbidNotificationsEnabled(),
+  }).catch(() => {
+    /* ignore */
+  });
+  syncNotificationsToggleButton();
+
+  if (!next) {
+    cleanupActiveAuctionsNotifications();
+  } else {
+    scheduleRender();
+  }
+}
+
+function handleNotificationsToggleKeydown(event) {
+  if (!(event instanceof KeyboardEvent)) {
+    return;
+  }
+
+  if (event.key !== 'Enter' && event.key !== ' ') {
+    return;
+  }
+
+  event.preventDefault();
+  handleNotificationsToggle();
 }
 
 function handleDarkModeToggle() {
@@ -2235,6 +3141,385 @@ function renderDarkModeToggleButtons() {
   }
 
   syncDarkModeToggleButtons();
+}
+
+function syncOutbidToggleButton() {
+  const btn = document.getElementById(OUTBID_TOGGLE_ID);
+  if (!(btn instanceof HTMLElement)) {
+    return;
+  }
+
+  const enabled = readOutbidNotificationsEnabled();
+  const label = enabled ? 'Disable outbid notifications' : 'Enable outbid notifications';
+
+  btn.setAttribute('aria-pressed', String(enabled));
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+  const stateText = enabled ? 'On' : 'Off';
+  btn.innerHTML = `
+    <span aria-hidden="true"></span>
+    <div class="col-start-2 flex items-center justify-between gap-2 w-full">
+      <p class="text-neutral-800">Outbid alerts</p>
+      <span class="text-body-sm font-semibold ${stateText === 'On' ? 'text-secondary' : 'text-neutral-800'}">${stateText}</span>
+    </div>
+  `;
+}
+
+function handleOutbidToggle() {
+  const next = !readOutbidNotificationsEnabled();
+  writeOutbidNotificationsEnabled(next);
+  sendRuntimeMessage({
+    type: 'SET_AUCTION_NOTIFICATIONS_ENABLED',
+    enabled: readNotificationsEnabled(),
+    outbidEnabled: next,
+  }).catch(() => {
+    /* ignore */
+  });
+  syncOutbidToggleButton();
+}
+
+function handleOutbidToggleKeydown(event) {
+  if (!(event instanceof KeyboardEvent)) {
+    return;
+  }
+
+  if (event.key !== 'Enter' && event.key !== ' ') {
+    return;
+  }
+
+  event.preventDefault();
+  handleOutbidToggle();
+}
+
+function renderNotificationsToggleButtons() {
+  for (const el of document.querySelectorAll(
+    `.${NOTIFICATIONS_SECTION_CLASS}, .${NOTIFICATIONS_TOGGLE_CLASS}, .${OUTBID_TOGGLE_CLASS}`
+  )) {
+    if (
+      el.id !== NOTIFICATIONS_SECTION_ID &&
+      el.id !== NOTIFICATIONS_TOGGLE_ID &&
+      el.id !== OUTBID_TOGGLE_ID
+    ) {
+      el.remove();
+    }
+  }
+
+  if (!isNellisAuctionSite()) {
+    document.getElementById(NOTIFICATIONS_SECTION_ID)?.remove();
+    document.getElementById(NOTIFICATIONS_TOGGLE_ID)?.remove();
+    document.getElementById(OUTBID_TOGGLE_ID)?.remove();
+    return;
+  }
+
+  const sidebar = findDashboardAuctionsSidebar();
+  if (!sidebar) {
+    document.getElementById(NOTIFICATIONS_SECTION_ID)?.remove();
+    document.getElementById(NOTIFICATIONS_TOGGLE_ID)?.remove();
+    document.getElementById(OUTBID_TOGGLE_ID)?.remove();
+    return;
+  }
+
+  const insertionPoint = findDashboardSidebarInsertionPoint(sidebar);
+  if (!insertionPoint) {
+    return;
+  }
+
+  let header = document.getElementById(NOTIFICATIONS_SECTION_ID);
+  if (!header) {
+    header = document.createElement('div');
+    header.id = NOTIFICATIONS_SECTION_ID;
+    header.className = `${NOTIFICATIONS_SECTION_CLASS} w-full grid grid-cols-[minmax(0,22px)_minmax(0,_1fr)] items-center gap-2 px-4 py-2 focus-visible:outline-secondary`;
+    header.innerHTML = `
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512" height="22" width="22" class="fill-neutral-800" aria-hidden="true">
+        <path d="M208 16c0-8.8 7.2-16 16-16s16 7.2 16 16l0 16.8c80.9 8 144 76.2 144 159.2l0 29.1c0 43.7 17.4 85.6 48.3 116.6l2.8 2.8c8.3 8.3 13 19.6 13 31.3c0 24.5-19.8 44.3-44.3 44.3L44.3 416C19.8 416 0 396.2 0 371.7c0-11.7 4.7-23 13-31.3l2.8-2.8C46.6 306.7 64 264.8 64 221.1L64 192c0-83 63.1-151.2 144-159.2L208 16zm16 48C153.3 64 96 121.3 96 192l0 29.1c0 52.2-20.7 102.3-57.7 139.2L35.6 363c-2.3 2.3-3.6 5.4-3.6 8.7c0 6.8 5.5 12.3 12.3 12.3l359.4 0c6.8 0 12.3-5.5 12.3-12.3c0-3.3-1.3-6.4-3.6-8.7l-2.8-2.8c-36.9-36.9-57.7-87-57.7-139.2l0-29.1c0-70.7-57.3-128-128-128zM193.8 458.7c4.4 12.4 16.3 21.3 30.2 21.3s25.8-8.9 30.2-21.3c2.9-8.3 12.1-12.7 20.4-9.8s12.7 12.1 9.8 20.4C275.6 494.2 251.9 512 224 512s-51.6-17.8-60.4-42.7c-2.9-8.3 1.4-17.5 9.8-20.4s17.5 1.4 20.4 9.8z"></path>
+      </svg>
+      <p class="text-neutral-800 text-title-xs font-semibold">Notifications</p>
+    `;
+    insertionPoint.appendChild(header);
+  } else if (header.parentElement !== insertionPoint) {
+    insertionPoint.appendChild(header);
+  }
+
+  let threeMinToggle = document.getElementById(NOTIFICATIONS_TOGGLE_ID);
+  if (!threeMinToggle) {
+    threeMinToggle = document.createElement('div');
+    threeMinToggle.id = NOTIFICATIONS_TOGGLE_ID;
+    threeMinToggle.className = `${NOTIFICATIONS_TOGGLE_CLASS} w-full grid grid-cols-[minmax(0,22px)_minmax(0,_1fr)] items-center gap-2 px-4 py-2 focus-visible:outline-secondary text-neutral-800 hover:text-secondary text-neutral-800 hover:bg-neutral-100`;
+    threeMinToggle.setAttribute('role', 'button');
+    threeMinToggle.setAttribute('tabindex', '0');
+    threeMinToggle.addEventListener('click', handleNotificationsToggle);
+    threeMinToggle.addEventListener('keydown', handleNotificationsToggleKeydown);
+    insertionPoint.appendChild(threeMinToggle);
+  } else if (threeMinToggle.parentElement !== insertionPoint) {
+    insertionPoint.appendChild(threeMinToggle);
+  }
+
+  let outbidToggle = document.getElementById(OUTBID_TOGGLE_ID);
+  if (!outbidToggle) {
+    outbidToggle = document.createElement('div');
+    outbidToggle.id = OUTBID_TOGGLE_ID;
+    outbidToggle.className = `${OUTBID_TOGGLE_CLASS} w-full grid grid-cols-[minmax(0,22px)_minmax(0,_1fr)] items-center gap-2 px-4 py-2 focus-visible:outline-secondary text-neutral-800 hover:text-secondary text-neutral-800 hover:bg-neutral-100`;
+    outbidToggle.setAttribute('role', 'button');
+    outbidToggle.setAttribute('tabindex', '0');
+    outbidToggle.addEventListener('click', handleOutbidToggle);
+    outbidToggle.addEventListener('keydown', handleOutbidToggleKeydown);
+    insertionPoint.appendChild(outbidToggle);
+  } else if (outbidToggle.parentElement !== insertionPoint) {
+    insertionPoint.appendChild(outbidToggle);
+  }
+
+  void syncNotificationsPermissionState(threeMinToggle);
+  syncNotificationsToggleButton();
+  syncOutbidToggleButton();
+}
+
+async function syncNotificationsPermissionState(button) {
+  if (!(button instanceof HTMLElement)) {
+    return;
+  }
+
+  try {
+    const response = await sendRuntimeMessage({ type: 'GET_NOTIFICATION_PERMISSION_LEVEL' });
+    if (typeof response?.level === 'string') {
+      button.dataset.permissionLevel = response.level;
+    } else {
+      button.dataset.permissionLevel = 'unknown';
+    }
+  } catch {
+    button.dataset.permissionLevel = 'unknown';
+  }
+}
+
+function findDashboardAuctionsSidebar(root = document) {
+  const containers = Array.from(
+    root.querySelectorAll(
+      'div[class~="hidden"][class~="md:flex"][class~="flex-col"][class~="py-4"][class~="gap-3"][class~="bg-white"][class~="rounded-itemCard"][class~="border"][class~="border-neutral-400"]'
+    )
+  );
+
+  for (const container of containers) {
+    if (!(container instanceof HTMLElement)) {
+      continue;
+    }
+
+    if (container.querySelector('a[href="/dashboard/auctions/active"]')) {
+      return container;
+    }
+  }
+
+  return null;
+}
+
+function findDashboardSidebarInsertionPoint(sidebar) {
+  if (!(sidebar instanceof HTMLElement)) {
+    return null;
+  }
+
+  // Prefer inserting in the list block (before Logout).
+  const listBlock = sidebar.querySelector('div[class~="flex"][class~="flex-col"][class~="gap-3"][class~="bg-white"]');
+  if (listBlock instanceof HTMLElement) {
+    return listBlock;
+  }
+
+  return sidebar;
+}
+
+function isActiveAuctionsPage(locationObject = window.location) {
+  return locationObject.pathname === '/dashboard/auctions/active';
+}
+
+function syncActiveAuctionsNotifications(routeKey) {
+  if (!isActiveAuctionsPage() || !readNotificationsEnabled()) {
+    cleanupActiveAuctionsNotifications();
+    return;
+  }
+
+  if (activeAuctionsPoller) {
+    return;
+  }
+
+  activeAuctionsLastSecondsByItem.clear();
+  activeAuctionsNotifiedItems.clear();
+
+  activeAuctionsPoller = window.setInterval(() => {
+    try {
+      pollActiveAuctionsForThreeMinuteWarning();
+    } catch (error) {
+      console.error('[NellisCompare] Active auctions poll error:', error);
+    }
+  }, 1500);
+}
+
+function cleanupActiveAuctionsNotifications() {
+  if (activeAuctionsPoller) {
+    window.clearInterval(activeAuctionsPoller);
+    activeAuctionsPoller = 0;
+  }
+  activeAuctionsLastSecondsByItem.clear();
+  activeAuctionsNotifiedItems.clear();
+}
+
+function pollActiveAuctionsForThreeMinuteWarning(root = document) {
+  if (!isActiveAuctionsPage() || !readNotificationsEnabled()) {
+    return;
+  }
+
+  const cards = Array.from(root.querySelectorAll('[data-ax="item-card-container"]'));
+  for (const card of cards) {
+    if (!(card instanceof HTMLElement)) {
+      continue;
+    }
+
+    const itemUrl = getItemUrlFromItemCard(card);
+    if (!itemUrl) {
+      continue;
+    }
+
+    const secondsLeft = getSecondsLeftFromItemCard(card);
+    if (!Number.isFinite(secondsLeft) || secondsLeft <= 0) {
+      continue;
+    }
+
+    const previousSeconds = activeAuctionsLastSecondsByItem.get(itemUrl);
+    activeAuctionsLastSecondsByItem.set(itemUrl, secondsLeft);
+
+    if (activeAuctionsNotifiedItems.has(itemUrl)) {
+      continue;
+    }
+
+    const crossedThreeMinutes =
+      typeof previousSeconds === 'number' ? previousSeconds > 180 && secondsLeft <= 180 : false;
+    const loadedNearThreshold = previousSeconds == null && secondsLeft <= 180 && secondsLeft >= 170;
+
+    if (!crossedThreeMinutes && !loadedNearThreshold) {
+      continue;
+    }
+
+    activeAuctionsNotifiedItems.add(itemUrl);
+
+    const itemTitle = getTitleFromItemCard(card) || 'Auction item';
+    sendRuntimeMessage({
+      type: 'POST_NOTIFICATION',
+      notificationId: buildNotificationId(itemUrl),
+      title: itemTitle,
+      message: '3 minutes left',
+      url: itemUrl,
+    }).catch((error) => {
+      console.error('[NellisCompare] Failed to send notification message:', error);
+    });
+  }
+}
+
+function buildNotificationId(itemUrl) {
+  const url = String(itemUrl || '');
+  const token = url.replace(/[^a-z0-9]/gi, '_').slice(-120);
+  return `nellis-3min-${token}`;
+}
+
+function getTitleFromItemCard(card) {
+  const titleLink = card.querySelector('a[data-ax="item-card-title-link"]');
+  const titleText = titleLink?.textContent?.trim();
+  if (titleText) {
+    return titleText;
+  }
+
+  const headings = Array.from(card.querySelectorAll('h1, h2, h3, [role="heading"]'));
+  for (const node of headings) {
+    const text = node?.textContent?.trim();
+    if (text) {
+      return text;
+    }
+  }
+
+  return '';
+}
+
+function getItemUrlFromItemCard(card) {
+  const cardLink = card.querySelector('a[data-ax="item-card-title-link"], a[data-ax="item-card-image-link"]');
+  const href = cardLink?.getAttribute('href');
+  if (!href) {
+    return '';
+  }
+  return new URL(href, window.location.origin).toString();
+}
+
+function getSecondsLeftFromItemCard(card) {
+  const timeLabelNodes = Array.from(card.querySelectorAll('p, span, strong, div')).filter((node) =>
+    node?.textContent?.trim().toLowerCase() === 'time left'
+  );
+
+  const candidates = [];
+
+  for (const labelNode of timeLabelNodes) {
+    const parent = labelNode.parentElement;
+    if (parent) {
+      candidates.push(...Array.from(parent.querySelectorAll('p, span, strong, div')));
+    }
+  }
+
+  candidates.push(...Array.from(card.querySelectorAll('[data-ax*="time"], [data-testid*="time"]')));
+  candidates.push(...Array.from(card.querySelectorAll('p, span, strong, div')));
+
+  for (const node of candidates) {
+    const text = node?.textContent?.trim();
+    if (!text || text.length > 32) {
+      continue;
+    }
+
+    const seconds = parseTimeLeftToSeconds(text);
+    if (Number.isFinite(seconds)) {
+      return seconds;
+    }
+  }
+
+  return NaN;
+}
+
+function parseTimeLeftToSeconds(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) {
+    return NaN;
+  }
+
+  // 01:23:45 or 12:34
+  if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(text)) {
+    const parts = text.split(':').map((part) => Number(part));
+    if (parts.some((part) => !Number.isFinite(part))) {
+      return NaN;
+    }
+    if (parts.length === 2) {
+      const [m, s] = parts;
+      return m * 60 + s;
+    }
+    const [h, m, s] = parts;
+    return h * 3600 + m * 60 + s;
+  }
+
+  // "1h 2m 3s", "3m 12s", "180s"
+  const unitMatch = text.match(
+    /^(?:(\d+)\s*h(?:ours?)?\s*)?(?:(\d+)\s*m(?:in(?:utes?)?)?\s*)?(?:(\d+)\s*s(?:ec(?:onds?)?)?\s*)?$/
+  );
+  if (unitMatch) {
+    const hours = unitMatch[1] ? Number(unitMatch[1]) : 0;
+    const mins = unitMatch[2] ? Number(unitMatch[2]) : 0;
+    const secs = unitMatch[3] ? Number(unitMatch[3]) : 0;
+    const total = hours * 3600 + mins * 60 + secs;
+    if (total > 0) {
+      return total;
+    }
+  }
+
+  // "3 minutes", "2 mins", "45 seconds"
+  const minutesOnly = text.match(/^(\d+)\s*(?:m|min|mins|minute|minutes)$/);
+  if (minutesOnly) {
+    return Number(minutesOnly[1]) * 60;
+  }
+  const secondsOnly = text.match(/^(\d+)\s*(?:s|sec|secs|second|seconds)$/);
+  if (secondsOnly) {
+    return Number(secondsOnly[1]);
+  }
+
+  return NaN;
 }
 
 async function handlePurchasesExport(event) {
@@ -2338,35 +3623,20 @@ async function fetchPurchasesPage({ page, size, omitPageParam = false }) {
     endpointUrl.searchParams.set('page', String(page));
   }
 
-  try {
-    const response = await fetch(endpointUrl.toString(), {
-      method: 'GET',
-      credentials: 'include',
-      headers: {
-        accept: 'application/json, text/plain, */*',
-      },
-    });
+  const response = await fetchNellisAsResponse(endpointUrl.toString(), {
+    method: 'GET',
+    headers: {
+      accept: 'application/json, text/plain, */*',
+    },
+  });
 
-    if (!response.ok) {
-      throw new Error(`Purchases request failed with status ${response.status}`);
-    }
-
-    const responseText = await response.text();
-    const parsed = JSON.parse(responseText);
-    return getPurchasesPageData(parsed);
-  } catch (error) {
-    const fallbackResponse = await sendRuntimeMessage({
-      type: 'FETCH_PURCHASES_PAGE',
-      page,
-      size,
-    });
-
-    if (fallbackResponse?.error) {
-      throw error;
-    }
-
-    return getPurchasesPageData(fallbackResponse?.data);
+  if (!response.ok) {
+    throw new Error(`Purchases request failed with status ${response.status}`);
   }
+
+  const responseText = await response.text();
+  const parsed = JSON.parse(responseText);
+  return getPurchasesPageData(parsed);
 }
 
 function getPurchasesPageData(payload) {

@@ -137,8 +137,8 @@ import {
     return changed;
   }
 
-  function dispatchEmbeddedRemixLoaderData() {
-    if (embeddedLoaderDispatched) {
+  function dispatchEmbeddedRemixLoaderData({ force = false } = {}) {
+    if (embeddedLoaderDispatched && !force) {
       return true;
     }
     try {
@@ -149,6 +149,12 @@ import {
       embeddedLoaderDispatched = true;
       for (const dataKey of Object.keys(loaderData)) {
         const json = loaderData[dataKey];
+        if (
+          window.location.pathname === '/dashboard/cart' ||
+          window.location.pathname.startsWith('/dashboard/cart/')
+        ) {
+          sortPickUpsItems(json, getCartSortKey());
+        }
         document.dispatchEvent(
           new CustomEvent('nellis-enhanced-remix', {
             bubbles: true,
@@ -162,6 +168,10 @@ import {
       return false;
     }
   }
+
+  document.addEventListener('nellis-enhanced-request-remix', () => {
+    dispatchEmbeddedRemixLoaderData({ force: true });
+  });
 
   function scheduleEmbeddedRemixLoaderData() {
     if (dispatchEmbeddedRemixLoaderData()) {
