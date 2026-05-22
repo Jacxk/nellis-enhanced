@@ -94,6 +94,7 @@ let cartBulkCheckoutInFlight = false;
 let cartSortObserver = null;
 let cartSortRaf = 0;
 let cartSortApplying = false;
+let cartSortPausedUntilMs = 0;
 let lastKnownUrl = window.location.href;
 /** Item id → formatted local time for “time left” hover (from Remix loaders or HTML fallback). */
 const closeTimeByItemId = new Map();
@@ -250,6 +251,7 @@ function installRouteListeners() {
   window.addEventListener('popstate', scheduleRender);
   window.addEventListener('pageshow', scheduleRender);
   window.addEventListener('load', scheduleRender);
+  installCartSortSubmissionGuard();
 
   const observer = new MutationObserver(() => {
     if (
@@ -315,6 +317,38 @@ function installRouteListeners() {
       scheduleRender();
     }
   }, ROUTE_WATCH_INTERVAL_MS);
+}
+
+function pauseCartSorting(ms = 5000) {
+  cartSortPausedUntilMs = Math.max(cartSortPausedUntilMs, Date.now() + ms);
+}
+
+function isCartSortingPaused() {
+  return Date.now() < cartSortPausedUntilMs;
+}
+
+function installCartSortSubmissionGuard() {
+  if (window.__nellisCartSortSubmissionGuardInstalled) {
+    return;
+  }
+  window.__nellisCartSortSubmissionGuardInstalled = true;
+
+  document.addEventListener(
+    'submit',
+    (event) => {
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement)) {
+        return;
+      }
+      const action = form.getAttribute('action') || '';
+      if (!action.includes('/dashboard/cart')) {
+        return;
+      }
+      // Prevent sort DOM shuffles from racing cart mutation submits.
+      pauseCartSorting(5000);
+    },
+    true
+  );
 }
 
 function scheduleRender() {
@@ -2124,7 +2158,13 @@ function parseCartDateMs(value) {
 }
 
 function getCartRowKeyFromItem(item) {
-  const buyNowId = item?.buyNowId ?? item?.buynowId ?? item?.buynowId;
+  const buyNowId =
+    item?.buyNowId ??
+    item?.buynowId ??
+    item?.buyNow?.id ??
+    item?.buy_now_id ??
+    item?.id ??
+    item?.itemId;
   return buyNowId == null ? '' : String(buyNowId);
 }
 
@@ -2173,6 +2213,67 @@ function buildCartItemDataIndex(items) {
     }
   }
   return map;
+}
+
+function normalizeCartText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getCartItemTitle(item) {
+  return String(
+    item?.leadDescription || item?.title || item?.itemTitle || item?.productTitle || item?.description || ''
+  );
+}
+
+function buildCartItemTitleIndex(items) {
+  const map = new Map();
+  for (const item of items) {
+    const norm = normalizeCartText(getCartItemTitle(item));
+    if (!norm) {
+      continue;
+    }
+    const bucket = map.get(norm);
+    if (bucket) {
+      bucket.push(item);
+    } else {
+      map.set(norm, [item]);
+    }
+  }
+  return map;
+}
+
+function extractCartRowTitle(row) {
+  const titleEl =
+    row.querySelector('a[href*="/p/"] p') ||
+    row.querySelector('a[aria-label*="Visit the product page"] p');
+  return titleEl?.textContent?.trim() || '';
+}
+
+function extractCartRowAmount(row) {
+  const feeHint = row.querySelector('[data-premium-source-amount]');
+  if (feeHint instanceof HTMLElement) {
+    const raw = feeHint.dataset.premiumSourceAmount;
+    const amount = Number(raw);
+    if (Number.isFinite(amount)) {
+      return amount;
+    }
+  }
+
+  const priceText = row.querySelector('.text-body-md, p')?.textContent || '';
+  const parsed = parseCurrencyAmount(priceText);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function extractCartRowDateWonMs(row) {
+  const text = row.textContent || '';
+  const match = text.match(/\bwon\b[:\s-]*([A-Za-z]{3,9}\s+\d{1,2},\s+\d{4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?)/i);
+  if (!match?.[1]) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  return parseCartDateMs(match[1]);
 }
 
 const CART_SORT_OPTIONS = [
@@ -2341,6 +2442,9 @@ function applyCartSortToDom(sortKey) {
   if (!isCartPage()) {
     return;
   }
+  if (isCartSortingPaused()) {
+    return;
+  }
 
   const rows = Array.from(document.querySelectorAll('[data-ax="pickups-item-container"]')).filter(
     (n) => n instanceof HTMLElement
@@ -2355,33 +2459,74 @@ function applyCartSortToDom(sortKey) {
   }
 
   const index = buildCartItemDataIndex(lastCartPickupsItems || []);
+  const titleIndex = buildCartItemTitleIndex(lastCartPickupsItems || []);
+  const rowSortValueCache = new WeakMap();
   const getDataForRow = (row) => {
-    const key = getCartRowKeyFromRow(row);
-    if (key && index.has(key)) {
-      return index.get(key);
+    if (rowSortValueCache.has(row)) {
+      return rowSortValueCache.get(row);
     }
-    return null;
+
+    const key = getCartRowKeyFromRow(row);
+    let data = key && index.has(key) ? index.get(key) : null;
+    if (!data) {
+      const rowTitle = extractCartRowTitle(row);
+      const bucket = titleIndex.get(normalizeCartText(rowTitle));
+      if (bucket?.length) {
+        if (bucket.length === 1) {
+          data = bucket[0];
+        } else {
+          const rowAmount = extractCartRowAmount(row);
+          data = bucket.reduce((best, candidate) => {
+            if (!best) {
+              return candidate;
+            }
+            const bestDelta = Math.abs((Number(best?.amount) || 0) - rowAmount);
+            const candidateDelta = Math.abs((Number(candidate?.amount) || 0) - rowAmount);
+            return candidateDelta < bestDelta ? candidate : best;
+          }, null);
+        }
+      }
+    }
+
+    const resolved = {
+      dateWonMs: parseCartDateMs(data?.dateWon),
+      amount: Number(data?.amount),
+      title: getCartItemTitle(data),
+    };
+
+    if (!Number.isFinite(resolved.dateWonMs) || resolved.dateWonMs === Number.NEGATIVE_INFINITY) {
+      resolved.dateWonMs = extractCartRowDateWonMs(row);
+    }
+    if (!Number.isFinite(resolved.amount)) {
+      resolved.amount = extractCartRowAmount(row);
+    }
+    if (!resolved.title) {
+      resolved.title = extractCartRowTitle(row);
+    }
+
+    rowSortValueCache.set(row, resolved);
+    return resolved;
   };
 
   const collator = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true });
   const comparator = (aRow, bRow) => {
-    const a = getDataForRow(aRow) || {};
-    const b = getDataForRow(bRow) || {};
+    const a = getDataForRow(aRow);
+    const b = getDataForRow(bRow);
 
     switch (sortKey) {
       case 'dateWon_asc':
-        return parseCartDateMs(a.dateWon) - parseCartDateMs(b.dateWon);
+        return a.dateWonMs - b.dateWonMs;
       case 'amount_desc':
-        return (Number(b.amount) || 0) - (Number(a.amount) || 0);
+        return b.amount - a.amount;
       case 'amount_asc':
-        return (Number(a.amount) || 0) - (Number(b.amount) || 0);
+        return a.amount - b.amount;
       case 'title_az':
-        return collator.compare(String(a.leadDescription || ''), String(b.leadDescription || ''));
+        return collator.compare(a.title, b.title);
       case 'title_za':
-        return collator.compare(String(b.leadDescription || ''), String(a.leadDescription || ''));
+        return collator.compare(b.title, a.title);
       case 'dateWon_desc':
       default:
-        return parseCartDateMs(b.dateWon) - parseCartDateMs(a.dateWon);
+        return b.dateWonMs - a.dateWonMs;
     }
   };
 
@@ -2583,6 +2728,39 @@ async function postCartPickupsFormForRow(row, actionValue, errorLabel) {
   }
 }
 
+function buildCartPickupsPostRequests(rows, actionValue) {
+  return rows.map((row) => {
+    const form = row.querySelector('form[action*="/dashboard/cart"]');
+    if (!(form instanceof HTMLFormElement)) {
+      throw new Error('Cart form not found for a selected row.');
+    }
+
+    const action = form.getAttribute('action');
+    if (!action) {
+      throw new Error('Cart form is missing an action URL.');
+    }
+
+    return {
+      actionUrl: new URL(action, window.location.origin).toString(),
+      body: buildCartFormPostBody(form, actionValue).toString(),
+    };
+  });
+}
+
+async function postCartPickupsFormFromSnapshot(actionUrl, body, errorLabel) {
+  const response = await fetchNellisAsResponse(actionUrl, {
+    method: 'POST',
+    headers: {
+      accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'content-type': 'application/x-www-form-urlencoded;charset=UTF-8',
+    },
+    body,
+  });
+  if (!response.ok) {
+    throw new Error(`${errorLabel} failed with status ${response.status}.`);
+  }
+}
+
 async function handleCartBulkSaveForLater() {
   if (cartBulkSaveInFlight) {
     return;
@@ -2598,6 +2776,7 @@ async function handleCartBulkSaveForLater() {
   }
 
   cartBulkSaveInFlight = true;
+  pauseCartSorting(8000);
   syncCartBulkToolbar();
 
   const saveBtn = document.querySelector(`#${CART_BULK_TOOLBAR_ID} [data-role="save"]`);
@@ -2606,9 +2785,10 @@ async function handleCartBulkSaveForLater() {
   }
 
   try {
+    const requests = buildCartPickupsPostRequests(selectedRows, 'save-for-later');
     let index = 0;
-    for (const row of selectedRows) {
-      await postCartPickupsFormForRow(row, 'save-for-later', 'Save for later');
+    for (const request of requests) {
+      await postCartPickupsFormFromSnapshot(request.actionUrl, request.body, 'Save for later');
       index += 1;
       if (saveBtn instanceof HTMLButtonElement) {
         saveBtn.textContent = `Saving… (${index}/${selectedRows.length})`;
@@ -2639,6 +2819,7 @@ async function handleCartBulkAddToCheckout() {
   }
 
   cartBulkCheckoutInFlight = true;
+  pauseCartSorting(8000);
   syncCartBulkCheckoutToolbar();
 
   const addBtn = document.querySelector(`#${CART_BULK_CHECKOUT_TOOLBAR_ID} [data-role="add-checkout"]`);
@@ -2647,9 +2828,10 @@ async function handleCartBulkAddToCheckout() {
   }
 
   try {
+    const requests = buildCartPickupsPostRequests(selectedRows, 'add-to-checkout');
     let index = 0;
-    for (const row of selectedRows) {
-      await postCartPickupsFormForRow(row, 'add-to-checkout', 'Add to checkout');
+    for (const request of requests) {
+      await postCartPickupsFormFromSnapshot(request.actionUrl, request.body, 'Add to checkout');
       index += 1;
       if (addBtn instanceof HTMLButtonElement) {
         addBtn.textContent = `Adding… (${index}/${selectedRows.length})`;

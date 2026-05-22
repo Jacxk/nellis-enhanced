@@ -149,6 +149,12 @@ import {
       embeddedLoaderDispatched = true;
       for (const dataKey of Object.keys(loaderData)) {
         const json = loaderData[dataKey];
+        if (
+          window.location.pathname === '/dashboard/cart' ||
+          window.location.pathname.startsWith('/dashboard/cart/')
+        ) {
+          sortPickUpsItems(json, getCartSortKey());
+        }
         document.dispatchEvent(
           new CustomEvent('nellis-enhanced-remix', {
             bubbles: true,
